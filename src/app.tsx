@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import { SessionView } from './SessionView.tsx';
 import { startSync } from './queue.ts';
-import { findDay, loadSession, newSession, saveSession, type Session } from './session.ts';
+import { defaultLiftOrder, findDay, loadSession, newSession, saveSession, type Session } from './session.ts';
 import {
   cachedBootstrap, fetchBootstrap, getConfig, nextDay, saveSetup,
   type Bootstrap, type Day, type Lift, type LiftKey, type SetRow,
@@ -78,7 +78,7 @@ export function App() {
         >
           {data.cycle.weeks.flatMap((w) => w.days.map((d) => (
             <option key={`${w.week}-${d.day}`} value={`${w.week}-${d.day}`}>
-              W{w.week} D{d.day} · {d.lifts.map((l) => (l.key ? LIFT_LABEL[l.key] : l.name)).join('+')}
+              W{w.week} D{d.day} · {defaultLiftOrder(d).map((i) => { const l = d.lifts[i]; return l.key ? LIFT_LABEL[l.key] : l.name; }).join('+')}
             </option>
           )))}
         </select>
@@ -118,8 +118,8 @@ function SetupForm() {
 function DayView({ day, week, data, inventory }: { day: Day; week: number; data: Bootstrap; inventory: Inventory }) {
   return (
     <>
-      {day.lifts.map((lift) => (
-        <LiftView key={lift.name} lift={lift} week={week} data={data} inventory={inventory} />
+      {defaultLiftOrder(day).map((li) => (
+        <LiftView key={day.lifts[li].name} lift={day.lifts[li]} week={week} data={data} inventory={inventory} />
       ))}
       {day.assistance.length > 0 && (
         <section class="card">

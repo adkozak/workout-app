@@ -65,7 +65,7 @@ Phone (installable web app / PWA)  <--JSON over HTTPS-->  Apps Script API (bound
 |---|---|---|
 | 0 | Apps Script API (`apps-script/api.gs`): read + write endpoints, token, session log. **Written and tested against a mock of the sheet.** | Deploy it (see README steps). |
 | 1 | Read-only session view with plate diagrams. Installable PWA. **Done.** | |
-| 2 | Logging: checkboxes, AMRAP, assistance, rest timer, offline queue, rm calc auto-row. **Built; click-tested against a mocked backend.** Not yet: offline app shell (service worker). | Test one real session. |
+| 2 | Logging: checkboxes, AMRAP, assistance, rest timer, offline queue, rm calc auto-row. **Built; click-tested against a mocked backend.** Includes squat-first ordering, plate add/remove steps, live stats, PR confetti, per-step timing (session log `done at` / `secs since previous` / `secs since start`), and an offline app shell. | Test one real session. |
 | 3 | Progress screens (charts, PR board, strength standards, stall warning). | none |
 | 4 | Next-cycle wizard. | Confirm the rollover rule. |
 

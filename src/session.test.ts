@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Day, Lift, SetRow } from './api.ts';
-import { buildItems, currentItem, entryFor, plannedWeight, rmOp, setOp, type Session } from './session.ts';
+import { buildItems, currentItem, defaultLiftOrder, entryFor, plannedWeight, rmOp, setOp, timing, tonnage, type Session } from './session.ts';
 
 const row = (index: number, kind: SetRow['kind'], weight: number, reps: string, extra: Partial<SetRow> = {}): SetRow => ({
   index, kind, cell: '', pct: null, weight, sets: kind === 'supplemental' ? 5 : 1, reps, note: null, ...extra,
@@ -80,4 +80,30 @@ test('rm row uses the weight actually lifted and leaves out skipped AMRAPs', () 
   const op = rmOp(items, s, d)!;
   assert.deepEqual(op.lifts, { squat: { weight: 92.5, reps: 9 } });
   assert.equal(op.id, 'rm-cycle15-w3d1-2026-09-28');
+});
+
+test('squat goes first when the day has it', () => {
+  const d = day();
+  d.lifts.reverse(); // bench + squat, like wide bench day
+  assert.deepEqual(defaultLiftOrder(d), [1, 0]);
+  const items = buildItems(d, defaultLiftOrder(d));
+  assert.equal(items[0].id, 'L2:0'); // squat is the sheet's lift 2
+  assert.deepEqual(defaultLiftOrder(day()), [0, 1]);
+});
+
+test('timing: seconds since the previous completion and since start', () => {
+  const s = { ...session(), startedAt: '2026-09-28T10:00:00.000Z' };
+  s.entries['L1:0'] = { status: 'done', at: '2026-09-28T10:02:00.000Z' };
+  s.entries['L1:1'] = { status: 'done', at: '2026-09-28T10:05:30.000Z' };
+  assert.deepEqual(timing(s, '2026-09-28T10:05:30.000Z', 'L1:1'), { doneAt: '2026-09-28T10:05:30.000Z', secsSincePrevious: 210, secsSinceStart: 330 });
+});
+
+test('tonnage counts logged sets only', () => {
+  const d = day();
+  const items = buildItems(d);
+  const s = session();
+  s.entries['L1:0'] = { status: 'done', at: 'x' };                        // 20 x 5
+  s.entries['L1:4'] = { status: 'changed', weight: 80, reps: 3, at: 'x' }; // 80 x 3
+  s.entries['L1:5'] = { status: 'skipped', at: 'x' };
+  assert.equal(tonnage(items, s), 100 + 240);
 });

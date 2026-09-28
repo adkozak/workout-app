@@ -5,3 +5,7 @@ import './style.css';
 
 consumeSetupLink();
 render(<App />, document.getElementById('app')!);
+
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  void navigator.serviceWorker.register('./sw.js');
+}

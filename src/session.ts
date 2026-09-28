@@ -18,6 +18,8 @@ export interface Session {
   startedAt: string;
   entries: Record<string, Entry>;
   finishedAt?: string;
+  /** Sheet lift indexes (0/1) in the order they are done today. */
+  liftOrder?: number[];
 }
 
 export type Item =
@@ -41,17 +43,54 @@ export function localDate(d = new Date()): string {
 }
 
 export function newSession(cycle: Cycle, week: number, day: number): Session {
-  return { cycle: cycle.name, week, day, date: localDate(), startedAt: new Date().toISOString(), entries: {} };
+  const d = findDay(cycle, week, day);
+  return {
+    cycle: cycle.name, week, day, date: localDate(), startedAt: new Date().toISOString(), entries: {},
+    liftOrder: d ? defaultLiftOrder(d) : undefined,
+  };
+}
+
+/** When the last thing before `at` was completed in this session (or the session start). */
+export function previousCompletion(session: Session, at: string, excludeId?: string): string {
+  let prev = session.startedAt;
+  for (const [id, e] of Object.entries(session.entries)) {
+    if (id === excludeId || e.status === 'open' || !e.at || e.at >= at) continue;
+    if (e.at > prev) prev = e.at;
+  }
+  return prev;
+}
+
+export function timing(session: Session, at: string, id: string): { doneAt: string; secsSincePrevious: number; secsSinceStart: number } {
+  const secs = (a: string, b: string) => Math.round((Date.parse(b) - Date.parse(a)) / 1000);
+  return { doneAt: at, secsSincePrevious: secs(previousCompletion(session, at, id), at), secsSinceStart: secs(session.startedAt, at) };
+}
+
+/** kg moved in this session (weight x reps of every logged barbell set). */
+export function tonnage(items: Item[], session: Session): number {
+  let t = 0;
+  for (const it of items) {
+    const e = session.entries[it.id];
+    if (it.type !== 'set' || !e || e.status === 'open' || e.status === 'skipped') continue;
+    t += (e.weight ?? it.row.weight) * (e.reps ?? plannedReps(it.row));
+  }
+  return t;
 }
 
 export function findDay(cycle: Cycle, week: number, day: number): Day | null {
   return cycle.weeks.find((w) => w.week === week)?.days.find((d) => d.day === day) ?? null;
 }
 
-/** Everything in the workout, in the order it is done. */
-export function buildItems(day: Day): Item[] {
+/** Squat goes first when the day has it; otherwise the sheet order. */
+export function defaultLiftOrder(day: Day): number[] {
+  const squat = day.lifts.findIndex((l) => l.key === 'squat');
+  return squat > 0 ? [squat, ...day.lifts.map((_, i) => i).filter((i) => i !== squat)] : day.lifts.map((_, i) => i);
+}
+
+/** Everything in the workout, in the order it is done. Item ids keep the sheet's lift numbers. */
+export function buildItems(day: Day, order = day.lifts.map((_, i) => i)): Item[] {
   const items: Item[] = [];
-  day.lifts.forEach((lift, li) => {
+  order.forEach((li) => {
+    const lift = day.lifts[li];
     const n = (li + 1) as 1 | 2;
     for (const row of lift.sets) {
       const subs = row.kind === 'supplemental' ? Math.max(1, row.sets || 5) : 1;
@@ -130,6 +169,7 @@ export function setOp(item: Item & { type: 'set' }, session: Session, entry: Ent
     planned,
     exercise: item.liftRef.key ?? item.liftRef.name,
     sessionDate: session.date,
+    ...(entry?.at ? timing(session, entry.at, item.id) : {}),
   };
 }
 
@@ -138,6 +178,7 @@ export function roundOp(round: number, session: Session, done: boolean): Op {
     id: opId(), type: 'assist_round',
     cycle: session.cycle, week: session.week, day: session.day,
     index: round, done, sessionDate: session.date,
+    ...(done ? timing(session, new Date().toISOString(), `A:${round}`) : {}),
   };
 }
 

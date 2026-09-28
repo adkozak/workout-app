@@ -115,3 +115,10 @@ export function planLoadings(targets: number[], inv: Inventory, bar = 20): Loadi
     return { perSide, total: cands[i].total, exact: cands[i].exact, changes: changeCost(prev, perSide) };
   });
 }
+
+/** Per-side loading steps from one stack to the next: pull `remove` (outermost first), then slide on `add`. */
+export function plateSteps(from: number[], to: number[]): { remove: number[]; add: number[] } {
+  let common = 0;
+  while (common < from.length && common < to.length && from[common] === to[common]) common++;
+  return { remove: from.slice(common).reverse(), add: to.slice(common) };
+}

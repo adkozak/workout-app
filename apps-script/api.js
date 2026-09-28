@@ -18,7 +18,7 @@ var RM_DATE_COL = 18;                 // R
 var LOG_SHEET = 'session log';
 var LOG_HEADERS = ['op id', 'logged at', 'session date', 'cycle', 'week', 'day', 'slot',
   'exercise', 'kind', 'set', 'planned weight', 'planned reps', 'actual weight',
-  'actual reps', 'status', 'note'];
+  'actual reps', 'status', 'note', 'done at', 'secs since previous', 'secs since start'];
 var NOTE_PREFIX = 'app: ';            // only notes with this prefix are ever cleared
 var SET_KINDS = ['warmup', 'warmup', 'warmup', 'main', 'main', 'amrap', 'supplemental'];
 
@@ -281,7 +281,8 @@ function readHistory_(ss) {
   if (log && log.getLastRow() > 1) {
     log.getRange(2, 1, log.getLastRow() - 1, LOG_HEADERS.length).getValues().forEach(function (r) {
       var e = {};
-      LOG_HEADERS.forEach(function (h, k) { e[h] = r[k] instanceof Date ? r[k].toISOString() : r[k]; });
+      // Local time, no zone shift: "session date" 2026-09-28 must not come back as the 27th.
+      LOG_HEADERS.forEach(function (h, k) { e[h] = r[k] instanceof Date ? Utilities.formatDate(r[k], tz, "yyyy-MM-dd'T'HH:mm:ss") : r[k]; });
       entries.push(e);
     });
   }
@@ -404,6 +405,9 @@ function logSheet_(ss) {
     sheet = ss.insertSheet(LOG_SHEET, ss.getSheets().length);
     sheet.getRange(1, 1, 1, LOG_HEADERS.length).setValues([LOG_HEADERS]).setFontWeight('bold');
     sheet.setFrozenRows(1);
+  } else if (sheet.getLastColumn() < LOG_HEADERS.length) {
+    // Older log without the timing columns: extend the header in place.
+    sheet.getRange(1, 1, 1, LOG_HEADERS.length).setValues([LOG_HEADERS]).setFontWeight('bold');
   }
   return sheet;
 }
@@ -428,6 +432,9 @@ function appendLog_(log, op) {
     op.type === 'set' ? SET_KINDS[op.set] : op.type, setLabel,
     planned.weight != null ? planned.weight : '', planned.reps != null ? planned.reps : '',
     op.actualWeight != null ? op.actualWeight : '', op.actualReps != null ? op.actualReps : '',
-    op.status || (op.type === 'assist_round' ? (op.done ? 'done' : 'undo') : ''), op.note || ''
+    op.status || (op.type === 'assist_round' ? (op.done ? 'done' : 'undo') : ''), op.note || '',
+    // Client-side times: "logged at" is when the phone got signal, this is when it happened.
+    op.doneAt ? new Date(op.doneAt) : '', op.secsSincePrevious != null ? op.secsSincePrevious : '',
+    op.secsSinceStart != null ? op.secsSinceStart : ''
   ]);
 }

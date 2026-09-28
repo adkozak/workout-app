@@ -114,3 +114,36 @@ main.session { padding-bottom: 110px; }
 .rest-time { flex: 1; font-size: 1.5rem; font-weight: 700; font-variant-numeric: tabular-nums; }
 .rest.over { background: #1d3325; }
 .rest.over .rest-time { color: #30a46c; }
+
+.btn.small { padding: 6px 10px; font-size: 0.85rem; }
+.btn.wide { width: 100%; }
+.lift-bar { display: flex; justify-content: space-between; align-items: center; }
+.lift-bar h2 { margin: 0; }
+.lift-time { display: block; margin: 2px 0 4px; }
+.live { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 6px; font-size: 0.85rem; color: var(--muted); }
+.live b { color: var(--text); font-variant-numeric: tabular-nums; }
+
+.load-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; }
+.steps { display: inline-flex; align-items: center; gap: 4px; font-size: 0.85rem; }
+.step { padding: 2px 7px; border-radius: 6px; font-weight: 700; }
+.step.on { background: #1d3325; color: #3dd68c; }
+.step.off { background: #3b1f22; color: #ff8589; }
+
+.amrap-input { justify-content: space-between; }
+.amrap-live { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+.badge { background: #1d3325; color: #3dd68c; border-radius: 6px; padding: 2px 7px; font-size: 0.8rem; font-weight: 700; }
+.badge.gold { background: #3a2c10; color: #f5a524; }
+
+.rest { flex-direction: column; align-items: stretch; gap: 6px; }
+.rest-main { display: flex; align-items: center; gap: 8px; }
+.rest-next { font-size: 0.9rem; }
+.next-set { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+
+.toast { position: fixed; left: 12px; right: 12px; top: 12px; z-index: 20; background: #3a2c10; border: 1px solid #f5a524; color: var(--text); border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 2px; box-shadow: 0 8px 30px #0008; }
+.toast b { color: #f5a524; font-size: 1.1rem; }
+.confetti { position: fixed; inset: 0; width: 100vw; height: 100vh; pointer-events: none; z-index: 30; }
+
+.big-facts { font-size: 1rem; gap: 6px 16px; margin: 10px 0 14px; }
+.phase { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; align-items: center; padding: 5px 0; font-size: 0.9rem; }
+.phase-bar { height: 8px; background: #262b33; border-radius: 4px; overflow: hidden; }
+.phase-bar span { display: block; height: 100%; background: #3e63dd; }

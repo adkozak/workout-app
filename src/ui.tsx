@@ -1,4 +1,3 @@
-import { useMemo } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
 import type { Bootstrap, Lift, LiftKey, SetRow } from './api.ts';
 import type { Inventory, Loading } from './plates.ts';
@@ -39,7 +38,7 @@ export function PlateStrip({ inventory, onChange }: { inventory: Inventory; onCh
   );
 }
 
-export function LiftHeader({ lift, list, data }: { lift: Lift; list: Amrap[]; data: Bootstrap }) {
+export function LiftHeader({ lift, list, data, hideTitle }: { lift: Lift; list: Amrap[]; data: Bootstrap; hideTitle?: boolean }) {
   const tm = lift.key ? data.cycle.tm[lift.key] : undefined;
   const best = bestE1rm(list);
   const first = list[0];
@@ -47,10 +46,12 @@ export function LiftHeader({ lift, list, data }: { lift: Lift; list: Amrap[]; da
   const bw = data.cycle.bodyweight;
   return (
     <div class="lift-head">
-      <div class="lift-title">
-        <h2>{lift.key ? LIFT_LABEL[lift.key] : lift.name}</h2>
-        {tm != null && <span class="muted">TM {kg(tm)}</span>}
-      </div>
+      {!hideTitle && (
+        <div class="lift-title">
+          <h2>{lift.key ? LIFT_LABEL[lift.key] : lift.name}</h2>
+          {tm != null && <span class="muted">TM {kg(tm)}</span>}
+        </div>
+      )}
       {best && (
         <div class="facts">
           <span>best e1RM <b>{kg1(best.e1rm)}</b> <small>({shortDate(best.date)})</small></span>
