@@ -147,3 +147,30 @@ main.session { padding-bottom: 110px; }
 .phase { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; align-items: center; padding: 5px 0; font-size: 0.9rem; }
 .phase-bar { height: 8px; background: #262b33; border-radius: 4px; overflow: hidden; }
 .phase-bar span { display: block; height: 100%; background: #3e63dd; }
+
+.card.paused { opacity: 0.6; }
+.lift-buttons { display: flex; gap: 4px; }
+.btn.do-next { margin-top: 10px; background: #26324f; }
+.btn.do-next small { color: var(--muted); }
+.add-extra { margin-top: 6px; }
+.item.extra .icon { color: #3e63dd; }
+.ladder { list-style: none; margin: 10px 0 0; padding: 0; font-size: 0.9rem; }
+.ladder li { display: flex; gap: 10px; align-items: baseline; padding: 6px 4px; border-top: 1px solid #262b33; color: var(--muted); }
+.ladder li b { min-width: 26px; text-align: right; color: var(--text); font-size: 1.1rem; }
+.ladder li span:nth-child(2) { flex: 1; }
+.ladder li.hit { color: #3dd68c; }
+.ladder li.hit.gold { color: #f5a524; }
+.ladder .tick { font-weight: 700; }
+.round.adjust { flex: 0 0 40px; background: transparent; color: var(--muted); }
+.round.adjust:disabled { opacity: 0.3; }
+.round.open { border-color: #f5a524; border-width: 2px; }
+.rounds { flex-wrap: nowrap; overflow-x: auto; }
+.round { min-width: 40px; }
+.round-row { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; }
+.rpe { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; margin-bottom: 10px; }
+.rpe-btn { background: #262b33; color: var(--text); border: 1px solid #333a44; border-radius: 10px; padding: 8px 2px; display: flex; flex-direction: column; align-items: center; }
+.rpe-btn b { font-size: 1.3rem; }
+.rpe-btn small { font-size: 0.6rem; line-height: 1.1; text-align: center; }
+.rpe-btn.on { background: #3e63dd; border-color: #3e63dd; }
+.rpe-btn.on small { color: var(--text); }
+.text-input { width: 100%; box-sizing: border-box; background: var(--bg); color: var(--text); border: 1px solid #333a44; border-radius: 8px; padding: 10px; font-size: 1rem; }

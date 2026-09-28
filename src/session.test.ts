@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Day, Lift, SetRow } from './api.ts';
-import { buildItems, currentItem, defaultLiftOrder, entryFor, plannedWeight, rmOp, setOp, timing, tonnage, type Session } from './session.ts';
+import { buildItems, currentItem, defaultLiftOrder, effectiveStart, entryFor, plannedWeight, rmOp, roundOp, setOp, timing, timingWarning, tonnage, type Session } from './session.ts';
 
 const row = (index: number, kind: SetRow['kind'], weight: number, reps: string, extra: Partial<SetRow> = {}): SetRow => ({
   index, kind, cell: '', pct: null, weight, sets: kind === 'supplemental' ? 5 : 1, reps, note: null, ...extra,
@@ -106,4 +106,59 @@ test('tonnage counts logged sets only', () => {
   s.entries['L1:4'] = { status: 'changed', weight: 80, reps: 3, at: 'x' }; // 80 x 3
   s.entries['L1:5'] = { status: 'skipped', at: 'x' };
   assert.equal(tonnage(items, s), 100 + 240);
+});
+
+test('doing a set out of order moves the cursor: next continues after it, not back at the top', () => {
+  const d = day();
+  const items = buildItems(d);
+  const s = session();
+  s.entries['L2:0'] = { status: 'done', at: 'x' }; // jumped to bench warm-up
+  s.cursor = 'L2:0';
+  assert.equal(currentItem(items, s, d)?.id, 'L2:1');
+  // once that exercise is finished, back to the first open item from the top
+  for (const it of items.slice(11, 22)) s.entries[it.id] = { status: 'done', at: 'x' };
+  assert.equal(currentItem(items, s, d)?.id, 'L1:0');
+  // pausing the exercise you jumped into also sends you back to the top
+  s.entries = { 'L2:0': { status: 'done', at: 'x' } };
+  s.paused = ['L2'];
+  assert.equal(currentItem(items, s, d)?.id, 'L1:0');
+});
+
+test('paused groups never become current', () => {
+  const d = day();
+  const items = buildItems(d);
+  const s = { ...session(), paused: ['L1'] };
+  assert.equal(currentItem(items, s, d)?.id, 'L2:0');
+  s.paused = ['L1', 'L2', 'A'];
+  assert.equal(currentItem(items, s, d), null);
+});
+
+test('Start tapped long before the first set does not count as workout time', () => {
+  const s = { ...session(), startedAt: '2026-09-28T15:42:00.000Z' };
+  s.entries['L1:0'] = { status: 'done', at: '2026-09-28T16:40:49.000Z' };
+  assert.equal(effectiveStart(s), '2026-09-28T16:39:19.000Z');
+  assert.equal(timing(s, '2026-09-28T16:40:49.000Z', 'L1:0').secsSincePrevious, 90);
+  const near = { ...session(), startedAt: '2026-09-28T16:35:00.000Z', entries: s.entries };
+  assert.equal(effectiveStart(near), near.startedAt);
+});
+
+test('timing warnings: double tap on a working set, missed 5x5 set', () => {
+  const d = day();
+  const items = buildItems(d);
+  const s = session();
+  assert.equal(timingWarning(items[4], 3, items, s, d)?.kind, 'double');
+  assert.equal(timingWarning(items[0], 3, items, s, d), null); // warm-ups tapped in a row are fine
+  const w = timingWarning(items[6], 8 * 60, items, s, d);
+  assert.equal(w?.kind, 'missed');
+  assert.equal(w?.kind === 'missed' && w.next.id, 'L1:6.1');
+  assert.equal(timingWarning(items[6], 3 * 60, items, s, d), null);
+});
+
+test('rounds past the sheet\'s 5 go to the log only', () => {
+  const s = session();
+  const e = { status: 'done' as const, at: '2026-09-28T10:00:00.000Z', detail: [{ index: 0, reps: 6 }] };
+  assert.equal(roundOp(4, s, e, 5).type, 'assist_round');
+  const extra = roundOp(5, s, e, 5);
+  assert.equal(extra.type, 'extra');
+  assert.equal(extra.note, '#1: 6');
 });

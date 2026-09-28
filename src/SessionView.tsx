@@ -5,16 +5,17 @@ import { confetti, restOver, tap, unlockAudio } from './fx.ts';
 import { planLoadings, plateSteps, type Inventory, type Loading } from './plates.ts';
 import { enqueue, onSync, syncState, type SyncState } from './queue.ts';
 import {
-  assistOp, buildItems, currentItem, defaultLiftOrder, entryFor, findDay, plannedReps, plannedWeight,
-  previousCompletion, restFor, rmOp, roundOp, setOp, tonnage, type Entry, type Item, type Session,
+  assistOp, buildItems, currentItem, defaultLiftOrder, effectiveStart, entryFor, extraOp, findDay, groupOf,
+  plannedReps, plannedWeight, previousCompletion, restFor, rmOp, roundOp, setOp, summaryOp, timing, timingWarning,
+  tonnage, type Entry, type Extra, type Item, type Session,
 } from './session.ts';
-import { bestE1rm, e1rm, liftHistory, repPrAt, sameWeekIn } from './stats.ts';
-import { AmrapPanel, BAR, LIFT_LABEL, LiftHeader, PlateStrip, Plates, kg, kg1 } from './ui.tsx';
+import { bestE1rm, e1rm, liftHistory, repPrAt, repsToBeat, sameWeekIn } from './stats.ts';
+import { AmrapPanel, BAR, LIFT_LABEL, LiftHeader, PlateStrip, Plates, kg, kg1, shortDate } from './ui.tsx';
 
 type SetItem = Item & { type: 'set' };
 type RoundItem = Item & { type: 'round' };
 interface Rest { endsAt: number; total: number }
-interface Toast { text: string; sub?: string }
+interface Toast { text: string; sub?: string; actions?: { label: string; run: () => void }[] }
 
 interface Props {
   cfg: Config;
@@ -46,13 +47,18 @@ function useNow(ms = 1000): number {
 export function SessionView({ cfg, data, session, setSession, inventory, setInventory, onClose }: Props) {
   const day = session.cycle === data.cycle.name ? findDay(data.cycle, session.week, session.day) : null;
   const order = session.liftOrder ?? (day ? defaultLiftOrder(day) : []);
-  const items = useMemo(() => (day ? buildItems(day, order) : []), [day, order.join()]);
+  const rounds = session.roundCount ?? day?.rounds.length ?? 0;
+  const items = useMemo(() => (day ? buildItems(day, order, rounds) : []), [day, order.join(), rounds]);
   const [editing, setEditing] = useState<string | null>(null);
   const [rest, setRest] = useState<Rest | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
   const [sync, setSync] = useState<SyncState>(syncState());
   useEffect(() => onSync(setSync), []);
-  useEffect(() => { if (toast) { const t = setTimeout(() => setToast(null), 5000); return () => clearTimeout(t); } }, [toast]);
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), toast.actions ? 10000 : 5000);
+    return () => clearTimeout(t);
+  }, [toast]);
   useWakeLock(!session.finishedAt);
 
   const current = day ? currentItem(items, session, day) : null;
@@ -85,23 +91,65 @@ export function SessionView({ cfg, data, session, setSession, inventory, setInve
     return { loading: l.loadings[i], prev: i > 0 ? l.loadings[i - 1].perSide : [] };
   };
 
-  const record = (item: Item, entry: Entry | null) => {
+  const opFor = (item: Item, s: Session, entry: Entry | null) => (item.type === 'set'
+    ? setOp(item, s, entry, { weight: plannedOf(item).weight, reps: item.row.reps })
+    : roundOp(item.round, s, entry, day.rounds.length));
+
+  const record = (item: Item, entry: Entry | null, base = session) => {
     unlockAudio();
     tap();
-    const entries = { ...session.entries, [item.id]: entry ?? { status: 'open' as const, at: new Date().toISOString() } };
-    const next = { ...session, entries };
+    const entries = { ...base.entries, [item.id]: entry ?? { status: 'open' as const, at: new Date().toISOString() } };
+    // The cursor follows you: after a set done out of order, "next" continues from there;
+    // after an undo, the undone set is next.
+    const next = { ...base, entries, cursor: item.id };
     setSession(next);
     setEditing(null);
-    enqueue(cfg, item.type === 'set'
-      ? setOp(item, next, entry, { weight: plannedOf(item).weight, reps: item.row.reps })
-      : roundOp(item.round, next, !!entry));
+    enqueue(cfg, opFor(item, next, entry));
     if (entry && entry.status !== 'skipped') {
       const secs = restFor(item);
       setRest({ endsAt: Date.now() + secs * 1000, total: secs });
     }
     if (item.type === 'set' && item.row.kind === 'amrap' && entry?.reps && entry.status !== 'skipped' && item.liftRef.key) {
       celebrate(item, entry);
+    } else if (entry && entry.status !== 'skipped') {
+      warn(item, entry, next);
     }
+    return next;
+  };
+
+  const warn = (item: Item, entry: Entry, s: Session) => {
+    const w = timingWarning(item, timing(s, entry.at, item.id).secsSincePrevious, items, s, day);
+    if (w?.kind === 'double') {
+      setToast({
+        text: `Two sets ${w.secs} s apart`, sub: 'Double tap?',
+        actions: [{ label: 'Undo last', run: () => { record(item, null, s); setRest(null); } }],
+      });
+    } else if (w?.kind === 'missed') {
+      const mid = new Date((Date.parse(previousCompletion(s, entry.at, item.id)) + Date.parse(entry.at)) / 2).toISOString();
+      setToast({
+        text: `${clock(w.secs)} since the last one`, sub: 'Did you do two without tapping?',
+        actions: [{ label: 'Mark one more done', run: () => { record(w.next, { status: 'done', at: mid, weight: w.next.type === 'set' ? plannedOf(w.next).weight : undefined, reps: w.next.type === 'set' ? plannedReps(w.next.row) : undefined }, s); } }],
+      });
+    }
+  };
+
+  const addExtra = (x: Omit<Extra, 'id' | 'at'>, exercise: string) => {
+    tap();
+    const extra: Extra = { ...x, id: `X+${crypto.randomUUID().slice(0, 8)}`, at: new Date().toISOString() };
+    const next = { ...session, extras: [...(session.extras ?? []), extra] };
+    setSession(next);
+    enqueue(cfg, extraOp(extra, next, exercise));
+    const secs = x.group === 'A' ? 90 : 120;
+    setRest({ endsAt: Date.now() + secs * 1000, total: secs });
+  };
+  const removeExtra = (x: Extra, exercise: string) => {
+    const next = { ...session, extras: (session.extras ?? []).filter((e) => e.id !== x.id) };
+    setSession(next);
+    enqueue(cfg, extraOp(x, next, exercise, true));
+  };
+  const togglePause = (group: string) => {
+    const paused = session.paused ?? [];
+    setSession({ ...session, paused: paused.includes(group) ? paused.filter((g) => g !== group) : [...paused, group] });
   };
 
   const celebrate = (item: SetItem, entry: Entry) => {
@@ -129,14 +177,22 @@ export function SessionView({ cfg, data, session, setSession, inventory, setInve
   };
 
   if (session.finishedAt) {
-    return <Summary data={data} session={session} items={items} day={day} sync={sync} onClose={() => { setSession(null); onClose(); }} />;
+    return (
+      <Summary data={data} session={session} items={items} day={day} sync={sync} onClose={(rpe, note) => {
+        const secs = (Date.parse(session.finishedAt!) - Date.parse(effectiveStart(session))) / 1000;
+        enqueue(cfg, summaryOp(session, { secs, tonnage: tonnage(items, session) }, rpe, note));
+        setSession(null);
+        onClose();
+      }} />
+    );
   }
 
   const doneCount = items.filter((it) => entryFor(it, session, day)).length;
+  const pausedLeft = !current && items.some((it) => !entryFor(it, session, day));
   const loggedAnything = Object.keys(session.entries).length > 0;
   const nextPreview = current?.type === 'set'
     ? <NextSet item={current} planned={plannedOf(current)} {...loadingOf(current)} />
-    : current ? <span>Assistance round {current.round + 1}</span> : <span>All done: finish when ready</span>;
+    : current ? <span>Assistance round {current.round + 1}</span> : <span>{pausedLeft ? 'Only paused exercises left' : 'All done: finish when ready'}</span>;
 
   return (
     <main class="session">
@@ -155,16 +211,25 @@ export function SessionView({ cfg, data, session, setSession, inventory, setInve
 
       <PlateStrip inventory={inventory} onChange={setInventory} />
 
-      {lifts.map(({ lift, its }, pos) => (
-        <section class="card" key={lift.name}>
+      {lifts.map(({ li, lift, its }, pos) => {
+        const group = `L${li + 1}`;
+        const paused = session.paused?.includes(group) ?? false;
+        const extras = (session.extras ?? []).filter((x) => x.group === group);
+        const lastWeight = [...its].reverse().map((it) => entryFor(it, session, day)).find((e) => e?.weight)?.weight ?? its[its.length - 1]?.row.weight ?? 20;
+        return (
+        <section class={`card ${paused ? 'paused' : ''}`} key={lift.name}>
           <div class="lift-bar">
             <h2>{liftName(lift)} <small class="muted">TM {kg(data.cycle.tm[lift.key!] ?? 0)}</small></h2>
-            {pos === 0 && order.length > 1 && (
-              <button class="btn small ghost" onClick={() => setSession({ ...session, liftOrder: [...order].reverse() })}>
-                ⇅ {liftName(day.lifts[order[1]])} first
-              </button>
-            )}
+            <span class="lift-buttons">
+              {pos === 0 && order.length > 1 && (
+                <button class="btn small ghost" onClick={() => setSession({ ...session, liftOrder: [...order].reverse() })}>
+                  ⇅ {liftName(day.lifts[order[1]])} first
+                </button>
+              )}
+              <button class="btn small ghost" onClick={() => togglePause(group)}>{paused ? '▶ Resume' : '⏸ Pause'}</button>
+            </span>
           </div>
+          {paused && <small class="muted">Paused: the next set comes from the other exercises until you resume.</small>}
           <LiftHeader lift={lift} list={lift.key ? liftHistory(data.history, lift.key) : []} data={data} hideTitle />
           <LiftTime session={session} its={its} />
           {its.map((it) => {
@@ -183,11 +248,21 @@ export function SessionView({ cfg, data, session, setSession, inventory, setInve
                 week={session.week}
                 onRecord={(e) => record(it, e)}
                 onEdit={() => setEditing(open ? null : it.id)}
+                onDoNext={() => { setSession({ ...session, cursor: it.id, paused: (session.paused ?? []).filter((g) => g !== groupOf(it)) }); setEditing(null); }}
               />
             );
           })}
+          {extras.map((x) => (
+            <div class="item extra" key={x.id} onClick={() => { if (confirm(`Remove extra set ${kg(x.weight ?? 0)} × ${x.reps}?`)) removeExtra(x, lift.key ?? lift.name); }}>
+              <span class="icon">✚</span>
+              <span class="what"><b>{kg(x.weight ?? 0)}</b> × {x.reps} <small class="muted">{x.label}{x.note ? ` · ${x.note}` : ''}</small></span>
+              <span class="side">extra</span>
+            </div>
+          ))}
+          <ExtraSetButton defaultWeight={lastWeight} onAdd={(w, r, note) => addExtra({ group, label: 'extra set', weight: w, reps: r, note }, lift.key ?? lift.name)} />
         </section>
-      ))}
+        );
+      })}
 
       {day.assistance.length > 0 && (
         <AssistanceView
@@ -196,7 +271,11 @@ export function SessionView({ cfg, data, session, setSession, inventory, setInve
           items={items.filter((it): it is RoundItem => it.type === 'round')}
           session={session}
           current={current}
-          onRound={(it, done) => record(it, done ? { status: 'done', at: new Date().toISOString() } : null)}
+          onRound={(it, entry) => record(it, entry)}
+          rounds={rounds}
+          onRounds={(n) => setSession({ ...session, roundCount: n })}
+          paused={session.paused?.includes('A') ?? false}
+          onPause={() => togglePause('A')}
           onExercise={(index, name, values) => {
             const entry: Entry = {
               status: 'done', at: new Date().toISOString(), name,
@@ -225,6 +304,12 @@ export function SessionView({ cfg, data, session, setSession, inventory, setInve
         <div class="toast" onClick={() => setToast(null)}>
           <b>{toast.text}</b>
           {toast.sub && <small>{toast.sub}</small>}
+          {toast.actions && (
+            <div class="btn-row">
+              {toast.actions.map((a) => <button key={a.label} class="btn primary" onClick={(e) => { e.stopPropagation(); a.run(); setToast(null); }}>{a.label}</button>)}
+              <button class="btn ghost">Keep</button>
+            </div>
+          )}
         </div>
       )}
       {rest && <RestTimer rest={rest} onChange={setRest}>{nextPreview}</RestTimer>}
@@ -235,8 +320,8 @@ export function SessionView({ cfg, data, session, setSession, inventory, setInve
 /** Elapsed time, kg moved, and when you'll be done at the current pace. */
 function LiveStats({ session, items, day }: { session: Session; items: Item[]; day: Day }) {
   const now = useNow();
-  const elapsed = (now - Date.parse(session.startedAt)) / 1000;
-  const completions = Object.values(session.entries).filter((e) => e.status !== 'open' && e.at).length;
+  const elapsed = (now - Date.parse(effectiveStart(session))) / 1000;
+  const completions = Object.values(session.entries).filter((e) => e.status !== 'open' && e.at).length + (session.extras?.length ?? 0);
   const remaining = items.filter((it) => !entryFor(it, session, day));
   const pace = completions >= 3 ? elapsed / completions : null;
   const left = remaining.reduce((t, it) => t + (pace ?? restFor(it) + 40), 0);
@@ -283,10 +368,10 @@ function NextSet({ item, planned, loading, prev }: { item: SetItem; planned: { w
   );
 }
 
-function SetItemView({ item, entry, open, isCurrent, planned, loading, prev, data, week, onRecord, onEdit }: {
+function SetItemView({ item, entry, open, isCurrent, planned, loading, prev, data, week, onRecord, onEdit, onDoNext }: {
   item: SetItem; entry: Entry | null; open: boolean; isCurrent: boolean;
   planned: { weight: number; reps: string }; loading: Loading; prev: number[];
-  data: Bootstrap; week: number; onRecord: (e: Entry | null) => void; onEdit: () => void;
+  data: Bootstrap; week: number; onRecord: (e: Entry | null) => void; onEdit: () => void; onDoNext: () => void;
 }) {
   const { row } = item;
   const perSide = (loading.total - BAR) / 2;
@@ -319,10 +404,13 @@ function SetItemView({ item, entry, open, isCurrent, planned, loading, prev, dat
         <Plates loading={loading} />
         <PlateStepsView from={prev} to={loading.perSide} />
       </div>
+      {!isCurrent && !entry && (
+        <button class="btn wide do-next" onClick={onDoNext}>▶ Do this next <small>(the app continues from here)</small></button>
+      )}
       <SetActions item={item} entry={entry} planned={planned} data={data} week={week} onRecord={onRecord} />
       {row.kind === 'amrap' && item.liftRef.key && (
-        <details class="amrap-details" open={isCurrent}>
-          <summary>AMRAP targets & stats</summary>
+        <details class="amrap-details">
+          <summary>Rep table & history</summary>
           <AmrapPanel set={{ ...row, weight: planned.weight }} lift={item.liftRef} liftKey={item.liftRef.key} list={liftHistory(data.history, item.liftRef.key)} week={week} data={data} />
         </details>
       )}
@@ -349,6 +437,15 @@ function SetActions({ item, entry, planned, data, week, onRecord }: {
   const best = bestE1rm(list);
   const pr = repPrAt(list, weight);
   const est = e1rm(weight, reps);
+  const lastTime = list[list.length - 1];
+  const match = (target: number) => repsToBeat(target - 1e-6, weight);
+  // Rep ladder: what each target takes at today's weight, ticked as the counter passes it.
+  const ladder = amrap ? [
+    lastTime && { label: `match last time (${kg(lastTime.weight)}×${lastTime.reps}, ${shortDate(lastTime.date)})`, reps: match(lastTime.e1rm) },
+    lastCycle && { label: `match last cycle wk${week} (${kg(lastCycle.weight)}×${lastCycle.reps})`, reps: match(e1rm(lastCycle.weight, lastCycle.reps)) },
+    pr && { label: `rep PR at ${kg(weight)} (was ${pr.reps})`, reps: pr.reps + 1 },
+    best && { label: `e1RM PR (${kg1(best.e1rm)})`, reps: repsToBeat(best.e1rm, weight), gold: true },
+  ].filter((x): x is { label: string; reps: number; gold?: boolean } => !!x).sort((a, b) => a.reps - b.reps) : [];
 
   const save = () => {
     const weightChanged = Math.abs(weight - planned.weight) > 1e-9;
@@ -365,9 +462,17 @@ function SetActions({ item, entry, planned, data, week, onRecord }: {
             <span>e1RM <b>{kg1(est)}</b></span>
             {best && est > best.e1rm && <span class="badge gold">★ e1RM PR</span>}
             {pr && reps > pr.reps && <span class="badge">rep PR</span>}
-            {lastCycle && <small class="muted">last cycle {lastCycle.reps}</small>}
           </div>
         </div>
+      )}
+      {ladder.length > 0 && (
+        <ul class="ladder">
+          {ladder.map((t) => (
+            <li key={t.label} class={reps >= t.reps ? (t.gold ? 'hit gold' : 'hit') : ''} onClick={() => setReps(t.reps)}>
+              <b>{t.reps}</b> <span>{t.label}</span> <span class="tick">{reps >= t.reps ? '✓' : ''}</span>
+            </li>
+          ))}
+        </ul>
       )}
       {changing && (
         <div class="change-form">
@@ -392,28 +497,38 @@ function previousAssistance(data: Bootstrap, week: number, day: number): Assista
   return src?.assistance ?? [];
 }
 
-function AssistanceView({ day, lastTime, items, session, current, onRound, onExercise }: {
+function AssistanceView({ day, lastTime, items, session, current, onRound, onExercise, rounds, onRounds, paused, onPause }: {
   day: Day; lastTime: Assistance[]; items: RoundItem[]; session: Session; current: Item | null;
-  onRound: (it: RoundItem, done: boolean) => void;
+  onRound: (it: RoundItem, entry: Entry | null) => void;
   onExercise: (index: number, name: string, values: { weight: number | null; reps: number | string | null; note?: string }) => void;
+  rounds: number; onRounds: (n: number) => void; paused: boolean; onPause: () => void;
 }) {
   const [editing, setEditing] = useState<number | null>(null);
+  const [openRound, setOpenRound] = useState<RoundItem | null>(null);
+  const exercises = day.assistance.map((a) => {
+    const logged = session.entries[`X:${a.index}`];
+    return { a, name: logged?.name ?? a.name, weight: logged?.weight ?? (typeof a.weight === 'number' ? a.weight : null), reps: logged?.reps ?? a.reps };
+  });
+  const doneRounds = items.filter((it) => entryFor(it, session, day)).length;
+  const roundTarget = current?.type === 'round' ? current : null;
+
   return (
-    <section class="card">
-      <h2>Assistance {day.assistanceNote && <small class="muted">{day.assistanceNote}</small>}</h2>
-      {day.assistance.map((a) => {
+    <section class={`card ${paused ? 'paused' : ''}`}>
+      <div class="lift-bar">
+        <h2>Assistance {day.assistanceNote && <small class="muted">{day.assistanceNote}</small>}</h2>
+        <button class="btn small ghost" onClick={onPause}>{paused ? '▶ Resume' : '⏸ Pause'}</button>
+      </div>
+      {exercises.map(({ a, name, weight, reps }) => {
         const logged = session.entries[`X:${a.index}`];
-        const weight = logged?.weight ?? (typeof a.weight === 'number' ? a.weight : null);
-        const reps = logged?.reps ?? a.reps;
-        const prev = lastTime.find((p) => p.index === a.index && p.name.toLowerCase() === (logged?.name ?? a.name).toLowerCase());
+        const prev = lastTime.find((p) => p.index === a.index && p.name.toLowerCase() === name.toLowerCase());
         return editing === a.index ? (
-          <AssistEditor key={a.index} name={logged?.name ?? a.name} weight={weight} reps={reps}
+          <AssistEditor key={a.index} name={name} weight={weight} reps={reps}
             onSave={(v) => { onExercise(a.index, v.name, v); setEditing(null); }} onCancel={() => setEditing(null)} />
         ) : (
           <div class="item todo" key={a.index} onClick={() => setEditing(a.index)}>
             <span class="icon">{logged ? '✎' : ''}</span>
             <span class="what">
-              {logged?.name ?? a.name}
+              {name}
               {prev && (prev.weight || prev.reps) && <small class="muted"> · last {prev.weight ? `${prev.weight} kg × ` : ''}{prev.reps}</small>}
             </span>
             <span class="side">{weight ? `${kg(weight)} kg · ` : ''}{a.sets}×{reps ?? '?'}</span>
@@ -424,14 +539,77 @@ function AssistanceView({ day, lastTime, items, session, current, onRound, onExe
         {items.map((it) => {
           const e = entryFor(it, session, day);
           return (
-            <button id={it.id} key={it.id} class={`round ${e ? 'done' : ''} ${current?.id === it.id ? 'current' : ''}`} onClick={() => onRound(it, !e)}>
+            <button id={it.id} key={it.id} class={`round ${e ? 'done' : ''} ${roundTarget?.id === it.id ? 'current' : ''} ${openRound?.id === it.id ? 'open' : ''}`}
+              onClick={() => {
+                if (e) { if (confirm(`Undo round ${it.round + 1}?`)) onRound(it, null); }
+                else setOpenRound(openRound?.id === it.id ? null : it);
+              }}>
               {e ? '✓' : `R${it.round + 1}`}
             </button>
           );
         })}
+        <button class="round adjust" disabled={rounds <= Math.max(1, doneRounds)} onClick={() => onRounds(rounds - 1)}>−</button>
+        <button class="round adjust" disabled={rounds >= 10} onClick={() => onRounds(rounds + 1)}>+</button>
       </div>
-      <small class="muted">Tap an exercise to log weight/reps or swap it; tap a round when it's done.</small>
+      {(openRound ?? roundTarget) && !paused && (
+        <RoundEditor key={(openRound ?? roundTarget)!.id} round={(openRound ?? roundTarget)!} exercises={exercises}
+          onDone={(detail) => { onRound((openRound ?? roundTarget)!, { status: 'done', at: new Date().toISOString(), detail }); setOpenRound(null); }} />
+      )}
+      <small class="muted">Tap an exercise to change its weight/reps for the day or swap it. Rounds past 5 go to the session log only.</small>
     </section>
+  );
+}
+
+/** Log a round: one tap if it went as planned, or adjust reps per exercise first. */
+function RoundEditor({ round, exercises, onDone }: {
+  round: RoundItem;
+  exercises: { a: Assistance; name: string; reps: number | string | null }[];
+  onDone: (detail: Entry['detail']) => void;
+}) {
+  const numeric = (r: number | string | null) => (typeof r === 'number' ? r : parseInt(String(r ?? ''), 10));
+  const [reps, setReps] = useState(exercises.map((x) => numeric(x.reps)));
+  const [adjusting, setAdjusting] = useState(false);
+  const detail = exercises
+    .map((x, i) => ({ index: x.a.index, planned: numeric(x.reps), reps: reps[i] }))
+    .filter((d) => !Number.isNaN(d.reps) && d.reps !== d.planned)
+    .map(({ index, reps: r }) => ({ index, reps: r }));
+  return (
+    <div class="item-card current round-editor">
+      {adjusting && exercises.map((x, i) => (
+        <label class="round-row" key={x.a.index}>
+          <span>{x.name}</span>
+          {Number.isNaN(reps[i]) ? <small class="muted">{x.reps}</small>
+            : <Stepper value={reps[i]} step={1} min={0} onChange={(v) => setReps(reps.map((r, j) => (j === i ? v : r)))} />}
+        </label>
+      ))}
+      <div class="btn-row">
+        <button class="btn primary" onClick={() => onDone(detail.length ? detail : undefined)}>
+          ✓ Round {round.round + 1}{adjusting ? (detail.length ? ' with these reps' : ' as planned') : ' done'}
+        </button>
+        {!adjusting && <button class="btn" onClick={() => setAdjusting(true)}>Reps…</button>}
+      </div>
+    </div>
+  );
+}
+
+function ExtraSetButton({ defaultWeight, onAdd }: { defaultWeight: number; onAdd: (weight: number, reps: number, note: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [w, setW] = useState(defaultWeight);
+  const [r, setR] = useState(5);
+  const [note, setNote] = useState('');
+  if (!open) return <button class="btn small ghost add-extra" onClick={() => { setW(defaultWeight); setOpen(true); }}>+ extra set</button>;
+  return (
+    <div class="item-card current">
+      <div class="change-form">
+        <label>Weight <Stepper value={w} step={2.5} min={0} onChange={setW} /></label>
+        <label>Reps <Stepper value={r} step={1} min={0} onChange={setR} /></label>
+        <input type="text" placeholder="note (optional): back-off, extra 5×5 set…" value={note} onInput={(e) => setNote(e.currentTarget.value)} />
+      </div>
+      <div class="btn-row">
+        <button class="btn primary" onClick={() => { onAdd(w, r, note); setOpen(false); setNote(''); }}>Add set ✓</button>
+        <button class="btn ghost" onClick={() => setOpen(false)}>Cancel</button>
+      </div>
+    </div>
   );
 }
 
@@ -524,10 +702,16 @@ function pastDurations(data: Bootstrap): { date: string; secs: number }[] {
   return [...byDate].map(([date, secs]) => ({ date, secs })).sort((a, b) => a.date.localeCompare(b.date));
 }
 
+const RPE_LABELS: Record<number, string> = {
+  5: 'easy', 6: 'moderate', 7: 'hard, lots left', 8: 'hard', 9: 'very hard', 10: 'max',
+};
+
 function Summary({ data, session, items, day, sync, onClose }: {
-  data: Bootstrap; session: Session; items: Item[]; day: Day; sync: SyncState; onClose: () => void;
+  data: Bootstrap; session: Session; items: Item[]; day: Day; sync: SyncState; onClose: (rpe: number | null, note: string) => void;
 }) {
-  const total = (Date.parse(session.finishedAt!) - Date.parse(session.startedAt)) / 1000;
+  const [rpe, setRpe] = useState<number | null>(null);
+  const [note, setNote] = useState('');
+  const total = (Date.parse(session.finishedAt!) - Date.parse(effectiveStart(session))) / 1000;
   const setItems = items.filter((it): it is SetItem => it.type === 'set');
   const count = (s: string) => setItems.filter((it) => entryFor(it, session, day)?.status === s).length;
   const deviations = setItems.filter((it) => ['changed', 'skipped'].includes(entryFor(it, session, day)?.status ?? ''));
@@ -608,7 +792,27 @@ function Summary({ data, session, items, day, sync, onClose }: {
           })}
         </section>
       )}
-      <button class="btn primary wide" onClick={onClose}>Close</button>
+      {(session.extras?.length ?? 0) > 0 && (
+        <section class="card">
+          <h2>Extra</h2>
+          {session.extras!.map((x) => (
+            <div class="row" key={x.id}><span>{x.group === 'A' ? 'Assistance' : liftName(day.lifts[Number(x.group.slice(1)) - 1])} {x.label}</span><span class="muted">{kg(x.weight ?? 0)}×{x.reps}{x.note ? ` · ${x.note}` : ''}</span></div>
+          ))}
+        </section>
+      )}
+
+      <section class="card">
+        <h2>How hard was it overall?</h2>
+        <div class="rpe">
+          {[5, 6, 7, 8, 9, 10].map((n) => (
+            <button key={n} class={`rpe-btn ${rpe === n ? 'on' : ''}`} onClick={() => { tap(); setRpe(rpe === n ? null : n); }}>
+              <b>{n}</b><small>{RPE_LABELS[n]}</small>
+            </button>
+          ))}
+        </div>
+        <input class="text-input" type="text" placeholder="How did it feel? sleep, energy, pain… (optional)" value={note} onInput={(e) => setNote(e.currentTarget.value)} />
+      </section>
+      <button class="btn primary wide" onClick={() => onClose(rpe, note)}>{rpe || note ? 'Save & close' : 'Close'}</button>
     </main>
   );
 }

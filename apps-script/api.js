@@ -422,14 +422,14 @@ function seenOpIds_(log) {
 
 function appendLog_(log, op) {
   var planned = op.planned || {};
-  var slot = op.type === 'set' ? 'lift' + op.lift : op.type === 'rm' ? 'rm calc' : op.type;
+  var slot = op.slot || (op.type === 'set' ? 'lift' + op.lift : op.type === 'rm' ? 'rm calc' : op.type);
   var setLabel = op.type === 'set'
     ? (op.set + (SET_KINDS[op.set] === 'supplemental' ? '.' + (op.sub || 0) : ''))
     : (op.index != null ? op.index : '');
   log.appendRow([
     op.id, new Date(), op.sessionDate || '', op.cycle || '', op.week || '', op.day || '', slot,
     op.exercise || op.name || (op.type === 'rm' ? JSON.stringify(op.lifts) : ''),
-    op.type === 'set' ? SET_KINDS[op.set] : op.type, setLabel,
+    op.kind || (op.type === 'set' ? SET_KINDS[op.set] : op.type), setLabel,
     planned.weight != null ? planned.weight : '', planned.reps != null ? planned.reps : '',
     op.actualWeight != null ? op.actualWeight : '', op.actualReps != null ? op.actualReps : '',
     op.status || (op.type === 'assist_round' ? (op.done ? 'done' : 'undo') : ''), op.note || '',
