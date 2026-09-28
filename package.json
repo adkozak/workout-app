@@ -1,0 +1,24 @@
+{
+  "name": "workout-app",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "test": "node --experimental-strip-types --test src/plates.test.ts",
+    "backend:push": "clasp push --force",
+    "backend:deploy": "clasp push --force && clasp redeploy \"$(cat .deployment-id)\" -d \"$(date -Iseconds)\""
+  },
+  "type": "module",
+  "devDependencies": {
+    "@google/clasp": "^3.4.1",
+    "@preact/preset-vite": "^2.10.6",
+    "@types/node": "^26.6.3",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.1"
+  },
+  "private": true,
+  "dependencies": {
+    "preact": "^10.29.8"
+  }
+}

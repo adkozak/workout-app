@@ -1,0 +1,7 @@
+node_modules/
+.venv/
+dist/
+log.xlsx
+.clasp.json
+.deployment-id
+apps-script/secret.js
