@@ -46,17 +46,24 @@ export interface Config { url: string; token: string }
 const CONFIG_KEY = 'config';
 const CACHE_KEY = 'bootstrap';
 
+/** Accepts a full setup link or just the code after #setup= ; returns true if saved. */
+export function saveSetup(input: string): boolean {
+  const code = (/setup=([^&\s]+)/.exec(input)?.[1] ?? input).trim();
+  try {
+    const cfg = JSON.parse(atob(code.replace(/-/g, '+').replace(/_/g, '/'))) as Config;
+    if (!cfg.url || !cfg.token) return false;
+    localStorage.setItem(CONFIG_KEY, JSON.stringify(cfg));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Reads #setup=... from the address bar, stores it, and removes it from the URL. */
 export function consumeSetupLink(): void {
-  const m = /[#&]setup=([^&]+)/.exec(location.hash);
-  if (!m) return;
-  try {
-    const json = atob(m[1].replace(/-/g, '+').replace(/_/g, '/'));
-    const cfg = JSON.parse(json) as Config;
-    if (cfg.url && cfg.token) localStorage.setItem(CONFIG_KEY, JSON.stringify(cfg));
-  } finally {
-    history.replaceState(null, '', location.pathname + location.search);
-  }
+  if (!/[#&]setup=/.test(location.hash)) return;
+  saveSetup(location.hash);
+  history.replaceState(null, '', location.pathname + location.search);
 }
 
 export function getConfig(): Config | null {

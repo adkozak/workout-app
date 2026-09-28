@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import {
-  cachedBootstrap, fetchBootstrap, getConfig, nextDay,
+  cachedBootstrap, fetchBootstrap, getConfig, nextDay, saveSetup,
   type Bootstrap, type Day, type Lift, type LiftKey, type SetRow,
 } from './api.ts';
 import { DEFAULT_INVENTORY, planLoadings, type Inventory, type Loading } from './plates.ts';
@@ -51,7 +51,8 @@ export function App() {
     return (
       <main class="empty">
         <h1>5/3/1</h1>
-        <p>Not set up. Open the setup link once on this phone.</p>
+        <p>Not set up yet. Scan the setup QR code with this phone, or paste the setup link here:</p>
+        <SetupForm />
       </main>
     );
   }
@@ -72,6 +73,25 @@ export function App() {
       {next ? <DayView day={next.day} week={next.week} data={data} inventory={inventory} /> : <p>All AMRAPs in {data.cycle.name} are logged.</p>}
       <OverallStats data={data} />
     </main>
+  );
+}
+
+function SetupForm() {
+  const [value, setValue] = useState('');
+  const [bad, setBad] = useState(false);
+  return (
+    <form
+      class="setup"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (saveSetup(value)) location.reload();
+        else setBad(true);
+      }}
+    >
+      <textarea rows={4} value={value} placeholder="https://…#setup=…" onInput={(e) => { setValue(e.currentTarget.value); setBad(false); }} />
+      <button class="chip" type="submit">Save</button>
+      {bad && <p class="down">That doesn't look like a setup link.</p>}
+    </form>
   );
 }
 
