@@ -5,7 +5,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "test": "node --experimental-strip-types --test src/plates.test.ts",
+    "test": "node --experimental-strip-types --test src/*.test.ts",
     "backend:push": "clasp push --force",
     "backend:deploy": "clasp push --force && clasp redeploy \"$(cat .deployment-id)\" -d \"$(date -Iseconds)\""
   },
