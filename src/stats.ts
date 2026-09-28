@@ -1,17 +1,22 @@
-// AMRAP and progress stats. Estimated 1RM uses the sheet's formula:
-// weight * (1 + (reps - 1) / 40).
+// AMRAP and progress stats. Estimated 1RM = weight * exp(0.03 * (reps - 1)):
+// every extra rep is worth 3% of weight. Fitted to the logged AMRAPs so that
+// e1RM does not jump when the weight steps up or down between close sessions
+// (the sheet's weight * (1 + (reps - 1) / 40) made week 3 look ~2% stronger than
+// week 2 on squat). Stays within ~2% of Epley up to 15 reps.
 
 import type { Cycle, History, LiftKey } from './api.ts';
 
 export interface Amrap { date: string; weight: number; reps: number; e1rm: number }
 
+const PER_REP = 0.03;
+
 export function e1rm(weight: number, reps: number): number {
-  return weight * (1 + (reps - 1) / 40);
+  return weight * Math.exp(PER_REP * (reps - 1));
 }
 
 /** Fewest reps at `weight` whose estimated 1RM is strictly above `target`. */
 export function repsToBeat(target: number, weight: number): number {
-  return Math.max(1, Math.floor(40 * (target / weight - 1) + 1 + 1e-9) + 1);
+  return Math.max(1, Math.floor(Math.log(target / weight) / PER_REP + 1 + 1e-9) + 1);
 }
 
 /** All logged AMRAPs for a lift, oldest first. */

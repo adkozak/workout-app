@@ -4,14 +4,15 @@ import { e1rm, repPrAt, repTable, repsToBeat, supplementalPct, trend, type Amrap
 
 const a = (date: string, weight: number, reps: number): Amrap => ({ date, weight, reps, e1rm: e1rm(weight, reps) });
 
-test('e1rm matches the sheet formula', () => {
+test('e1rm: a single is the weight, each extra rep adds 3%', () => {
   assert.equal(e1rm(100, 1), 100);
-  assert.equal(e1rm(80, 11), 100);
+  assert.ok(Math.abs(e1rm(100, 11) / e1rm(100, 10) - Math.exp(0.03)) < 1e-12);
+  assert.ok(Math.abs(e1rm(75, 10) - 98.2) < 0.05); // Epley: 100
 });
 
 test('repsToBeat is the smallest rep count strictly above the target', () => {
-  assert.equal(repsToBeat(100, 80), 12); // 11 reps ties 100 exactly
-  assert.equal(repsToBeat(99, 80), 11);
+  assert.equal(repsToBeat(e1rm(80, 11), 80), 12); // 11 reps only ties
+  assert.equal(repsToBeat(99, 80), 9); // 8 reps = 98.7, 9 reps = 101.7
   assert.equal(repsToBeat(50, 80), 1);
 });
 
@@ -29,7 +30,8 @@ test('supplemental % follows the sheet rule', () => {
 
 test('trend compares the last window to the window before it', () => {
   const list = [a('2025-01-01', 200, 1), a('2026-05-01', 80, 11), a('2026-09-01', 90, 11)];
-  assert.equal(trend(list, 90, new Date('2026-09-28')), 12.5); // old all-time best ignored
+  const t = trend(list, 90, new Date('2026-09-28'))!;
+  assert.ok(Math.abs(t - (e1rm(90, 11) - e1rm(80, 11))) < 1e-9); // old all-time best ignored
 });
 
 test('rep table for a 1+ set starts near the interesting reps', () => {
@@ -40,7 +42,7 @@ test('rep table for a 1+ set starts near the interesting reps', () => {
 });
 
 test('rep table marks where you beat the best e1RM', () => {
-  const list = [a('2026-01-01', 80, 11)]; // best e1RM 100
+  const list = [a('2026-01-01', 80, 11)];
   const rows = repTable({ weight: 80, minReps: 5, list, tm: 100, mainPcts: [0.75, 0.85, 0.95], key: 'squat', week: 3 });
   assert.equal(rows.find((r) => r.beatsBest)?.reps, 12);
   assert.equal(rows.find((r) => r.reps === 12)?.isRepPr, true);
