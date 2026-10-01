@@ -14,6 +14,7 @@
     "backend:test:deploy": "scripts/backend.sh test deploy",
     "backend:test:link": "scripts/backend.sh test link",
     "watch:install": "cd watch && npm install",
+    "watch:setup-qr": "scripts/backend.sh prod qr",
     "watch:build": "node scripts/gen.mjs watch && cd watch && npx zeus build",
     "watch:dev": "node scripts/gen.mjs watch && cd watch && npx zeus dev",
     "watch:preview": "node scripts/gen.mjs watch && cd watch && npx zeus preview",

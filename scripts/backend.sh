@@ -3,7 +3,8 @@
 #
 #   scripts/backend.sh prod push|deploy
 #   scripts/backend.sh test init <scriptId>   # once: wire up a copy of the sheet (see README)
-#   scripts/backend.sh test push|deploy|link
+#   scripts/backend.sh test push|deploy|link|qr
+#   scripts/backend.sh prod qr                # setup code as a QR code in the terminal, for the watch
 #
 # prod uses .clasp.json, .deployment-id and apps-script/secret.js as before.
 # test uses .clasp.test.json, .deployment-id.test and its own token in .secret.test,
@@ -12,8 +13,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-env=${1:?usage: backend.sh prod|test init|push|deploy|link}
-cmd=${2:?usage: backend.sh prod|test init|push|deploy|link}
+env=${1:?usage: backend.sh prod|test init|push|deploy|link|qr}
+cmd=${2:?usage: backend.sh prod|test init|push|deploy|link|qr}
 
 node scripts/gen.mjs apps-script
 
@@ -76,5 +77,11 @@ case $cmd in
     npx clasp -P "$project" update-deployment "$(cat "$deployment_file")" -d "$(date -Iseconds)"
     ;;
   link) link ;;
+  qr)
+    # The setup code as a QR code, to get it onto the phone: scan with the camera, copy, paste into Zepp.
+    code=$(link | sed -n 's/^setup code[^:]*: //p')
+    CODE="$code" node -e 'require("./watch/node_modules/qrcode-terminal").generate(process.env.CODE, { small: true })'
+    echo "Scan with the phone camera (or Google Lens), copy the text, paste it into the Zepp app's settings for Workout 531."
+    ;;
   *) echo "unknown command $cmd" >&2; exit 1 ;;
 esac
