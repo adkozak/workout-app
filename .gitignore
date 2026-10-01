@@ -5,3 +5,11 @@ log.xlsx
 .clasp.json
 .deployment-id
 apps-script/secret.js
+.clasp.test.json
+.deployment-id.test
+.secret.test
+.build/
+devserver/data/
+watch/node_modules/
+watch/dist/
+watch/lib/shared.js

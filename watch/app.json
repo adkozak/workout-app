@@ -1,0 +1,36 @@
+{
+  "configVersion": "v3",
+  "app": {
+    "appId": 1090531,
+    "appName": "Workout 531",
+    "appType": "app",
+    "version": { "code": 1, "name": "1.0.0" },
+    "icon": "icon.png",
+    "vender": "adkozak",
+    "description": "Log 5/3/1 sets, rest and heart rate to the workout sheet"
+  },
+  "permissions": [
+    "data:os.device.info",
+    "device:os.local_storage",
+    "data:user.hd.heart_rate",
+    "device:os.alarm"
+  ],
+  "runtime": {
+    "apiVersion": { "compatible": "4.2", "target": "4.2", "minVersion": "4.2" }
+  },
+  "targets": {
+    "default": {
+      "module": {
+        "page": { "pages": ["page/index"] },
+        "app-side": { "path": "app-side/index" },
+        "setting": { "path": "setting/index" }
+      },
+      "platforms": [
+        { "st": "r", "dw": 480 },
+        { "st": "s", "dw": 480 }
+      ]
+    }
+  },
+  "i18n": { "en-US": { "appName": "Workout 531" } },
+  "defaultLanguage": "en-US"
+}

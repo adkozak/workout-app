@@ -166,3 +166,12 @@ export function AmrapPanel({ set, lift, liftKey, list, week, data }: {
   );
 }
 
+export function Stepper({ value, step, min, onChange, big }: { value: number; step: number; min: number; onChange: (v: number) => void; big?: boolean }) {
+  return (
+    <span class={`stepper ${big ? 'big' : ''}`}>
+      <button type="button" onClick={() => onChange(Math.max(min, +(value - step).toFixed(2)))}>−</button>
+      <b>{+value.toFixed(2)}</b>
+      <button type="button" onClick={() => onChange(+(value + step).toFixed(2))}>+</button>
+    </span>
+  );
+}

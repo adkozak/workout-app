@@ -12,7 +12,11 @@ export interface Entry {
   status: Status; weight?: number; reps?: number; note?: string; name?: string; at: string;
   /** Assistance round: what each exercise actually got, when it differs from the plan. */
   detail?: { index: number; reps: number | string | null }[];
+  /** Heart rate from the watch: at the tap, highest and lowest since the previous completion. */
+  hr?: HrMarks;
 }
+
+export interface HrMarks { done?: number; peak?: number; low?: number; avg?: number }
 
 /** A set that isn't in the sheet plan (an extra 5x5, a back-off set, a 6th round). Session log only. */
 export interface Extra { id: string; group: string; label: string; weight?: number; reps?: number; note?: string; at: string }
@@ -34,7 +38,15 @@ export interface Session {
   /** Assistance rounds today, if not the sheet's 5. */
   roundCount?: number;
   extras?: Extra[];
+  /** Extras removed on some device; kept so a sync doesn't bring them back. */
+  removedExtras?: string[];
   rpe?: number;
+  /** Heart rate over the whole workout so far (watch only). */
+  hr?: { avg: number; max: number; min: number; samples: number };
+  /** A try-out: nothing goes to the sheet and it isn't shared with the other device. */
+  practice?: boolean;
+  /** When each non-set field last changed, for merging copies from phone and watch (see live.ts). */
+  stamps?: Partial<Record<string, string>>;
 }
 
 export type Item =
@@ -57,11 +69,12 @@ export function localDate(d = new Date()): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-export function newSession(cycle: Cycle, week: number, day: number): Session {
+export function newSession(cycle: Cycle, week: number, day: number, practice = false): Session {
   const d = findDay(cycle, week, day);
   return {
     cycle: cycle.name, week, day, date: localDate(), startedAt: new Date().toISOString(), entries: {},
     liftOrder: d ? defaultLiftOrder(d) : undefined,
+    ...(practice ? { practice: true } : {}),
   };
 }
 
@@ -229,9 +242,17 @@ export function restFor(item: Item): number {
 
 export interface Op { id: string; type: string; [k: string]: unknown }
 
-function opId(): string {
-  return crypto.randomUUID();
+/** Random id. The watch and plain-http pages have no crypto.randomUUID; ids only need to be unique. */
+export function uuid(): string {
+  const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
+  if (c?.randomUUID) return c.randomUUID();
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (ch) => {
+    const r = (Math.random() * 16) | 0;
+    return (ch === 'x' ? r : (r & 3) | 8).toString(16);
+  });
 }
+
+const opId = uuid;
 
 export function setOp(item: Item & { type: 'set' }, session: Session, entry: Entry | null, planned: { weight: number; reps: string }): Op {
   return {
@@ -246,6 +267,7 @@ export function setOp(item: Item & { type: 'set' }, session: Session, entry: Ent
     planned,
     exercise: item.liftRef.key ?? item.liftRef.name,
     sessionDate: session.date,
+    hr: entry?.hr,
     ...(entry?.at ? timing(session, entry.at, item.id) : {}),
   };
 }
@@ -257,7 +279,7 @@ export function roundOp(round: number, session: Session, entry: Entry | null, sh
     id: opId(), type: round < sheetRounds ? 'assist_round' : 'extra',
     kind: round < sheetRounds ? undefined : 'assistance round',
     cycle: session.cycle, week: session.week, day: session.day,
-    index: round, done: !!entry, status: entry ? 'done' : 'undo', note, sessionDate: session.date,
+    index: round, done: !!entry, status: entry ? 'done' : 'undo', note, sessionDate: session.date, hr: entry?.hr,
     ...(entry?.at ? timing(session, entry.at, `A:${round}`) : {}),
   };
 }
@@ -281,6 +303,7 @@ export function summaryOp(session: Session, totals: { secs: number; tonnage: num
     exercise: 'workout', actualWeight: Math.round(totals.tonnage), actualReps: rpe,
     status: 'done', note: [rpe != null ? `RPE ${rpe}` : '', note].filter(Boolean).join(' · '), sessionDate: session.date,
     doneAt: session.finishedAt, secsSinceStart: Math.round(totals.secs),
+    hr: session.hr ? { peak: session.hr.max, low: session.hr.min, avg: session.hr.avg } : undefined,
   };
 }
 
@@ -306,4 +329,16 @@ export function rmOp(items: Item[], session: Session, day: Day): Op | null {
   }
   if (Object.keys(lifts).length === 0) return null;
   return { id: `rm-${session.cycle}-w${session.week}d${session.day}-${session.date}`, type: 'rm', sessionDate: session.date, lifts };
+}
+
+/** Assistance weight/reps set ahead of a workout (from the Today screen's planner). */
+export function assistPlanOp(
+  cycle: string, week: number, day: number, index: number, name: string,
+  values: { weight: number | null; reps: number | string | null },
+): Op {
+  return {
+    id: opId(), type: 'assist', kind: 'assistance plan',
+    cycle, week, day, index, exercise: name, actualWeight: values.weight, actualReps: values.reps,
+    status: 'planned', note: '', sessionDate: localDate(),
+  };
 }

@@ -45,10 +45,31 @@ Program: Wendler 5/3/1, 4 training days/week, 3 weeks/cycle, one tab per cycle. 
 - Each row is one session, only the day's two lifts filled. AMRAP data is entered twice today: once in the cycle tab, once here.
 - A1/A2 hold "NEW SESSION" / "CURRENT SESSION" controls, likely an existing Apps Script (not visible in export).
 
+## What the app reads and writes beyond the workout
+- **Assistance rows:** besides name/weight/sets/reps, the app reads:
+  - the round cells on each exercise row (reps typed there when a round fell short, e.g. `4 | 4`)
+  - the note in the column after the rounds
+- **Strength standards (AW6:BE12):**
+  - row 7 names the levels (intermediate/advanced/elite) and row 6 their horizon (2y/5y/10y)
+  - rows 8–12 hold an exercise name in AW and its bodyweight ratio (or reps, for "pullup bw") per level
+  - AX6 is the bodyweight; the app's Progress screen writes it (`bodyweight` op).
+- **assistance plan:** the `final:` list (name in A, target range in B) gives each exercise its range.
+- **New cycle (`new_cycle` op):**
+  - copies the newest tab as cycleN+1, first in the tab order, and writes the TMs (C2:G2) and AX6
+  - in each day block it clears the "actual" column and the 5 after it (rows W+3..W+23), plus assistance weight and reps
+  - checkboxes become FALSE, other values empty, notes are removed; formula cells are kept
+  - the script property `current cycle` makes the new tab today's cycle even if the previous one wasn't finished.
+
 ## Quirks
 - cycle15 week 3 day 4: deadlift warm-ups are 60/60/60 with reps 3/5/7, and the press AMRAP says "5+" instead of "1+".
 - Strength-standard 1RM formulas in AZ8:AZ10 are #REF!.
 - Dates are text in rm calc, real dates in weight deprecated. Mixed Slovak/English notes.
 
 ## session log (created by the app)
-One row per app action: op id, logged at, session date, cycle, week, day, slot, exercise, kind, set, planned weight/reps, actual weight/reps, status (done/changed/skipped/undo), note.
+One row per app action: op id, logged at, session date, cycle, week, day, slot, exercise, kind, set, planned weight/reps, actual weight/reps, status (done/changed/skipped/undo), note, done at, secs since previous, secs since start, then heart rate from the watch:
+- **hr done**: bpm at the tap
+- **hr peak** and **hr low**: highest and lowest bpm since the previous completion
+- **hr avg**: summary rows only; there, hr peak and hr low are the workout's max and min
+
+## hr (created by the app)
+Heart rate samples from the watch, about one every 5 s: session date, started at, time, secs since start, bpm. Written in batches of about 5 minutes.

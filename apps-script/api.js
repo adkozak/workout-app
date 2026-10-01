@@ -1,9 +1,16 @@
 // JSON API for the 5/3/1 PWA. Lives next to extractExerciseData() in the same
 // Apps Script project; every helper here ends in "_" so nothing clashes.
 //
-// GET  ?token=..&action=ping|cycle|history|bootstrap[&name=cycle15]
+// GET  ?token=..&action=ping|cycle|history|bootstrap|archive|live[&name=cycle15]
+//      (bootstrap without a name picks the cycle in progress; see currentCycle_;
+//       archive is every cycle8+ tab in full plus the assistance plan, for the
+//       History/Progress/Cycle screens)
 // POST body (Content-Type: text/plain, avoids CORS preflight):
-//      {"token": "..", "ops": [{"id": "..", "type": "set"|"assist"|"assist_round"|"rm"|"extra", ...}]}
+//      {"token": "..", "ops": [{"id": "..", "type": "set"|"assist"|"assist_round"|"rm"|"extra"|"hr"|"bodyweight"|"new_cycle", ...}],
+//       "live": {session?, close?, inventory?, hr?}}   (optional; see src/live.ts)
+// The live session (the workout in progress, shared by phone and watch) lives in
+// script properties; merging is done by Live.applyPush from live.js, which is
+// generated from src/live.ts.
 
 var MIN_WRITABLE_CYCLE = 8;           // cycle8+ share the current layout
 var WEEK_ROWS = [4, 30, 56];          // "Week n" label rows
@@ -18,7 +25,15 @@ var RM_DATE_COL = 18;                 // R
 var LOG_SHEET = 'session log';
 var LOG_HEADERS = ['op id', 'logged at', 'session date', 'cycle', 'week', 'day', 'slot',
   'exercise', 'kind', 'set', 'planned weight', 'planned reps', 'actual weight',
-  'actual reps', 'status', 'note', 'done at', 'secs since previous', 'secs since start'];
+  'actual reps', 'status', 'note', 'done at', 'secs since previous', 'secs since start',
+  'hr done', 'hr peak', 'hr low', 'hr avg'];
+var HR_SHEET = 'hr';
+var HR_HEADERS = ['session date', 'started at', 'time', 'secs since start', 'bpm'];
+var LIVE_KEY = 'live';
+var CURRENT_KEY = 'current cycle';    // set by new_cycle: train this tab even if the one before is unfinished
+var BW_CELL = 'AX6';
+var PLAN_SHEET = 'assistance plan';
+var LIVE_CHUNK = 4000;                // script properties hold 9 kB per value; notes may be 2-byte UTF-8
 var NOTE_PREFIX = 'app: ';            // only notes with this prefix are ever cleared
 var SET_KINDS = ['warmup', 'warmup', 'warmup', 'main', 'main', 'amrap', 'supplemental'];
 
@@ -30,12 +45,15 @@ function doGet(e) {
       case 'ping': return { now: new Date().toISOString(), cycles: cycleNames_(ss) };
       case 'cycle': return readCycle_(ss, e.parameter.name || newestCycle_(ss));
       case 'history': return readHistory_(ss);
+      case 'live': return readLive_();
+      case 'archive': return readArchive_(ss);
       case 'bootstrap': {
-        var name = newestCycle_(ss);
-        var prev = 'cycle' + (cycleNumber_(name) - 1);
+        var read = cycleReader_(ss);
+        var cycle = currentCycle_(ss, e.parameter.name, read);
+        var prev = 'cycle' + (cycle.number - 1);
         return {
-          cycle: readCycle_(ss, name),
-          previous: ss.getSheetByName(prev) ? readCycle_(ss, prev) : null,
+          cycle: cycle,
+          previous: ss.getSheetByName(prev) ? read(prev) : null,
           history: readHistory_(ss)
         };
       }
@@ -51,27 +69,40 @@ function doPost(e) {
     var lock = LockService.getScriptLock();
     lock.waitLock(20000);
     try {
+      var ops = body.ops || [];
       var ss = SpreadsheetApp.getActiveSpreadsheet();
-      var log = logSheet_(ss);
-      var seen = seenOpIds_(log);
-      return {
-        results: (body.ops || []).map(function (op) {
-          if (!op.id) return { id: null, status: 'error', error: 'op without id' };
-          if (seen[op.id]) return { id: op.id, status: 'duplicate' };
-          try {
-            applyOp_(ss, op);
-            appendLog_(log, op);
-            seen[op.id] = true;
-            return { id: op.id, status: 'applied' };
-          } catch (err) {
-            return { id: op.id, status: 'error', error: String(err.message || err) };
-          }
-        })
-      };
+      // A live-only sync (every few seconds during a workout) skips reading the whole log.
+      var log = ops.length ? logSheet_(ss) : null;
+      var seen = ops.length ? seenOpIds_(log) : {};
+      var results = ops.map(function (op) {
+        if (!op.id) return { id: null, status: 'error', error: 'op without id' };
+        if (seen[op.id]) return { id: op.id, status: 'duplicate' };
+        try {
+          applyOp_(ss, op);
+          appendLog_(log, op);
+          seen[op.id] = true;
+          return { id: op.id, status: 'applied' };
+        } catch (err) {
+          return { id: op.id, status: 'error', error: String(err.message || err) };
+        }
+      });
+      var live = null;
+      if (body.live) {
+        var current = readLive_();
+        live = Live.applyPush(current, body.live, new Date().toISOString());
+        if (live !== current) writeLive_(live);
+      }
+      return { results: results, live: live };
     } finally {
       lock.releaseLock();
     }
   });
+}
+
+/** Run once from the script editor after deploying to a new copy of the sheet, to grant access. */
+function authorize() {
+  SpreadsheetApp.getActiveSpreadsheet().getName();
+  PropertiesService.getScriptProperties().getProperties();
 }
 
 // ---------- plumbing ----------
@@ -107,6 +138,54 @@ function cycleNames_(ss) {
 
 function newestCycle_(ss) {
   return cycleNames_(ss)[0];
+}
+
+/** readCycle_ that reads each tab at most once. */
+function cycleReader_(ss) {
+  var seen = {};
+  return function (name) { return seen[name] || (seen[name] = readCycle_(ss, name)); };
+}
+
+/**
+ * The cycle being trained: the one asked for, else the one of the workout in
+ * progress, else the newest cycle with anything logged (or the tab after it,
+ * once it is finished). A tab set up ahead of time waits until the one before
+ * it is done.
+ */
+function currentCycle_(ss, requested, read) {
+  var names = cycleNames_(ss);
+  var live = readLive_().session;
+  var started = PropertiesService.getScriptProperties().getProperty(CURRENT_KEY);
+  var wanted = [requested, live && live.cycle, started === names[0] ? started : null];
+  for (var i = 0; i < wanted.length; i++) {
+    if (wanted[i] && names.indexOf(wanted[i]) >= 0) return read(wanted[i]);
+  }
+  for (var j = 0; j < names.length && cycleNumber_(names[j]) >= MIN_WRITABLE_CYCLE; j++) {
+    var c = read(names[j]);
+    if (!cycleStarted_(c)) continue;
+    return cycleFinished_(c) && j > 0 ? read(names[j - 1]) : c;
+  }
+  return read(names[0]);
+}
+
+function cycleSets_(c) {
+  var sets = [];
+  c.weeks.forEach(function (w) {
+    w.days.forEach(function (d) { d.lifts.forEach(function (l) { sets = sets.concat(l.sets); }); });
+  });
+  return sets;
+}
+
+function cycleStarted_(c) {
+  return cycleSets_(c).some(function (s) {
+    return s.actual != null || s.done === true || (Array.isArray(s.done) && s.done.indexOf(true) >= 0);
+  });
+}
+
+/** Every AMRAP logged: the same test the app uses to pick the next day. */
+function cycleFinished_(c) {
+  var amraps = cycleSets_(c).filter(function (s) { return s.kind === 'amrap'; });
+  return amraps.length > 0 && amraps.every(function (s) { return s.actual != null; });
 }
 
 function colLetter_(col) {
@@ -166,7 +245,7 @@ function readCycle_(ss, name) {
 
   var tm = {};
   Object.keys(TM_COLS).forEach(function (col) {
-    var x = sheet.getRange(col + '2').getValue();
+    var x = cell(2, col.charCodeAt(0) - 64); // already in the grid: no extra sheet call
     if (typeof x === 'number') tm[TM_COLS[col]] = x;
   });
 
@@ -178,6 +257,7 @@ function readCycle_(ss, name) {
     writable: cycleNumber_(name) >= MIN_WRITABLE_CYCLE && problems.length === 0,
     layoutProblems: problems,
     bodyweight: typeof cell(6, 50) === 'number' ? cell(6, 50) : null, // AX6
+    standards: readStandards_(v),
     weeks: []
   };
   if (problems.length) return result;
@@ -221,12 +301,19 @@ function readCycle_(ss, name) {
       for (var a = 0; a < 4; a++) {
         var r = hr + 1 + a;
         if (!cell(r, c)) continue;
+        var roundReps = [0, 1, 2, 3, 4].map(function (k) {
+          var x = cell(r, c + 5 + k);
+          return x === '' || typeof x === 'boolean' ? null : x;
+        });
         assistance.push({
           index: a,
           name: cell(r, c),
           weight: cell(r, c + 2) === '' ? null : cell(r, c + 2),
           sets: cell(r, c + 3),
-          reps: cell(r, c + 4) === '' ? null : cell(r, c + 4)
+          reps: cell(r, c + 4) === '' ? null : cell(r, c + 4),
+          // What rounds got when it wasn't the plan, typed into the round cells (e.g. 4, 4 in rounds 4-5).
+          roundReps: roundReps.some(function (x) { return x !== null; }) ? roundReps : null,
+          note: cell(r, c + 10) || note(r, c) || null
         });
       }
       return {
@@ -240,6 +327,55 @@ function readCycle_(ss, name) {
     result.weeks.push({ week: wi + 1, days: days });
   });
   return result;
+}
+
+/**
+ * Strength standards block (AW6:BE12): a header row naming the levels
+ * (intermediate/advanced/elite, with 2y/5y/10y above), then one row per exercise
+ * with its bodyweight ratio (or reps, for "pullup bw") at each level.
+ */
+function readStandards_(v) {
+  var at = function (r, c) { return (v[r - 1] || [])[c - 1]; };
+  var levels = [];
+  for (var c = 50; c <= BLOCK_COLS; c++) {
+    var h = String(at(7, c) || '').toLowerCase();
+    if (/^(intermediate|advanced|elite)$/.test(h)) levels.push({ name: h, col: c, horizon: String(at(6, c) || '') || null });
+  }
+  if (!levels.length) return null;
+  var rows = [];
+  for (var r = 8; r <= 12; r++) {
+    var name = String(at(r, 49) || '').trim();
+    var targets = levels.map(function (l) { return at(r, l.col); });
+    if (name && targets.every(function (x) { return typeof x === 'number' && x > 0; })) rows.push({ name: name, targets: targets });
+  }
+  return {
+    levels: levels.map(function (l) { return { name: l.name, horizon: l.horizon }; }),
+    rows: rows
+  };
+}
+
+// ---------- archive ----------
+
+function readArchive_(ss) {
+  var cycles = cycleNames_(ss)
+    .filter(function (n) { return cycleNumber_(n) >= MIN_WRITABLE_CYCLE; })
+    .map(function (n) { return readCycle_(ss, n); });
+  return { cycles: cycles, assistancePlan: readAssistancePlan_(ss) };
+}
+
+/** The "final:" list in "assistance plan": exercise name and its target range ("8-12", "30s per side"). */
+function readAssistancePlan_(ss) {
+  var sheet = ss.getSheetByName(PLAN_SHEET);
+  if (!sheet || sheet.getLastRow() < 1) return [];
+  var rows = sheet.getRange(1, 1, sheet.getLastRow(), 2).getValues();
+  var out = [];
+  var on = false;
+  rows.forEach(function (r) {
+    var name = String(r[0]).trim();
+    if (/^final:?$/i.test(name)) { on = true; return; }
+    if (on && name && r[1] !== '') out.push({ name: name, range: String(r[1]).trim() });
+  });
+  return out;
 }
 
 // ---------- history ----------
@@ -264,7 +400,7 @@ function readHistory_(ss) {
 
   var tms = cycleNames_(ss).map(function (name) {
     var sheet = ss.getSheetByName(name);
-    var top = sheet.getRange(1, 1, 3, 7).getValues();
+    var top = sheet.getRange(1, 1, 6, 50).getValues();
     var tmRow = top[1][1] === 'TM' ? 1 : top[2][1] === 'TM' ? 2 : -1;
     var tm = {};
     if (tmRow >= 0) {
@@ -273,7 +409,8 @@ function readHistory_(ss) {
         if (typeof x === 'number') tm[TM_COLS[col]] = x;
       });
     }
-    return { cycle: name, number: cycleNumber_(name), tm: tm };
+    var bw = top[5][49];
+    return { cycle: name, number: cycleNumber_(name), tm: tm, bodyweight: typeof bw === 'number' ? bw : null };
   });
 
   var log = ss.getSheetByName(LOG_SHEET);
@@ -329,6 +466,9 @@ function applyOp_(ss, op) {
     case 'assist_round': return applyRound_(ss, op);
     case 'rm': return applyRm_(ss, op);
     case 'extra': return; // only goes to the session log
+    case 'hr': return applyHr_(ss, op);
+    case 'bodyweight': return applyBodyweight_(ss, op);
+    case 'new_cycle': return applyNewCycle_(ss, op);
     default: throw new Error('unknown op type ' + op.type);
   }
 }
@@ -397,6 +537,97 @@ function applyRm_(ss, op) {
     .setValue(Number(d[3]) + '.' + Number(d[2]) + '.' + d[1]);
 }
 
+// op: {sessionDate, startedAt, samples: [[unix secs, bpm], ...]}
+// Heart rate from the watch, thinned to one sample every few seconds.
+function applyHr_(ss, op) {
+  var sheet = ss.getSheetByName(HR_SHEET);
+  if (!sheet) {
+    sheet = ss.insertSheet(HR_SHEET, ss.getSheets().length);
+    sheet.getRange(1, 1, 1, HR_HEADERS.length).setValues([HR_HEADERS]).setFontWeight('bold');
+    sheet.setFrozenRows(1);
+  }
+  var samples = op.samples || [];
+  if (!samples.length) return;
+  var start = Date.parse(op.startedAt) / 1000;
+  var rows = samples.map(function (x) {
+    checkRange_(x[1], 20, 250, 'bpm');
+    return [op.sessionDate || '', op.startedAt || '', new Date(x[0] * 1000), isNaN(start) ? '' : Math.round(x[0] - start), x[1]];
+  });
+  sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, HR_HEADERS.length).setValues(rows);
+}
+
+// op: {cycle, actualWeight}: bodyweight in kg, into AX6 of that cycle tab (the
+// standards block divides by it). The session log row is the history.
+function applyBodyweight_(ss, op) {
+  var sheet = ss.getSheetByName(op.cycle);
+  if (!sheet) throw new Error('no sheet ' + op.cycle);
+  var w = op.actualWeight;
+  if (typeof w !== 'number' || w < 30 || w > 250) throw new Error('bad bodyweight: ' + w);
+  var cell = sheet.getRange(BW_CELL);
+  if (cell.getFormula && cell.getFormula()) throw new Error(BW_CELL + ' is a formula in ' + op.cycle);
+  cell.setValue(w);
+}
+
+// op: {name: 'cycle16', from: 'cycle15', tm: {squat: 100, ...}, bodyweight?}
+// Copies the tab, puts it first and clears everything logged in it: AMRAPs,
+// checkboxes, per-round reps, notes, and assistance weight/reps (planned per
+// workout). Formulas, lift and exercise names, sets and warm-ups stay.
+function applyNewCycle_(ss, op) {
+  if (cycleNumber_(op.name) !== cycleNumber_(op.from) + 1) throw new Error('new cycle must follow ' + op.from);
+  if (ss.getSheetByName(op.name)) throw new Error(op.name + ' already exists');
+  var src = writableSheet_(ss, op.from);
+  var sheet = ss.insertSheet(op.name, 0, { template: src });
+  Object.keys(TM_COLS).forEach(function (col) {
+    var x = op.tm && op.tm[TM_COLS[col]];
+    if (x == null) return;
+    if (typeof x !== 'number' || x <= 0 || x > 500) throw new Error('bad TM for ' + TM_COLS[col] + ': ' + x);
+    sheet.getRange(col + '2').setValue(x);
+  });
+  if (typeof op.bodyweight === 'number') sheet.getRange(BW_CELL).setValue(op.bodyweight);
+  WEEK_ROWS.forEach(function (w) {
+    DAY_COLS.forEach(function (c) {
+      // Sets, rounds and assistance rows: "actual" column and the 5 after it.
+      clearKeepingFormulas_(sheet.getRange(w + 3, c + 5, 21, 6));
+      // Assistance weight and reps; the sets column in between stays.
+      [2, 4].forEach(function (k) { clearKeepingFormulas_(sheet.getRange(w + 20, c + k, 4, 1)); });
+    });
+  });
+  PropertiesService.getScriptProperties().setProperty(CURRENT_KEY, op.name);
+}
+
+/** Checkboxes to FALSE, other values to empty, notes gone; formula cells untouched. One read, one write. */
+function clearKeepingFormulas_(range) {
+  var values = range.getValues();
+  var formulas = range.getFormulas();
+  range.setValues(values.map(function (row, i) {
+    return row.map(function (x, j) {
+      if (formulas[i][j]) return formulas[i][j];
+      return typeof x === 'boolean' ? false : '';
+    });
+  }));
+  range.clearNote();
+}
+
+// ---------- live session ----------
+
+function readLive_() {
+  var props = PropertiesService.getScriptProperties();
+  var n = Number(props.getProperty(LIVE_KEY + ':n') || 0);
+  if (!n) return Live.EMPTY_LIVE;
+  var s = '';
+  for (var i = 0; i < n; i++) s += props.getProperty(LIVE_KEY + ':' + i) || '';
+  try { return JSON.parse(s); } catch (err) { return Live.EMPTY_LIVE; }
+}
+
+function writeLive_(doc) {
+  var s = JSON.stringify(doc);
+  var values = {};
+  var n = Math.max(1, Math.ceil(s.length / LIVE_CHUNK));
+  for (var i = 0; i < n; i++) values[LIVE_KEY + ':' + i] = s.slice(i * LIVE_CHUNK, (i + 1) * LIVE_CHUNK);
+  values[LIVE_KEY + ':n'] = String(n);
+  PropertiesService.getScriptProperties().setProperties(values);
+}
+
 // ---------- session log ----------
 
 function logSheet_(ss) {
@@ -423,18 +654,22 @@ function seenOpIds_(log) {
 function appendLog_(log, op) {
   var planned = op.planned || {};
   var slot = op.slot || (op.type === 'set' ? 'lift' + op.lift : op.type === 'rm' ? 'rm calc' : op.type);
+  var hr = op.hr || {};
+  var num = function (x) { return typeof x === 'number' ? x : ''; };
   var setLabel = op.type === 'set'
     ? (op.set + (SET_KINDS[op.set] === 'supplemental' ? '.' + (op.sub || 0) : ''))
     : (op.index != null ? op.index : '');
   log.appendRow([
     op.id, new Date(), op.sessionDate || '', op.cycle || '', op.week || '', op.day || '', slot,
-    op.exercise || op.name || (op.type === 'rm' ? JSON.stringify(op.lifts) : ''),
+    op.exercise || op.name || (op.type === 'rm' ? JSON.stringify(op.lifts) : op.type === 'hr' ? 'heart rate' : ''),
     op.kind || (op.type === 'set' ? SET_KINDS[op.set] : op.type), setLabel,
     planned.weight != null ? planned.weight : '', planned.reps != null ? planned.reps : '',
     op.actualWeight != null ? op.actualWeight : '', op.actualReps != null ? op.actualReps : '',
-    op.status || (op.type === 'assist_round' ? (op.done ? 'done' : 'undo') : ''), op.note || '',
+    op.status || (op.type === 'assist_round' ? (op.done ? 'done' : 'undo') : ''),
+    op.note || (op.type === 'hr' ? (op.samples || []).length + ' samples' : ''),
     // Client-side times: "logged at" is when the phone got signal, this is when it happened.
     op.doneAt ? new Date(op.doneAt) : '', op.secsSincePrevious != null ? op.secsSincePrevious : '',
-    op.secsSinceStart != null ? op.secsSinceStart : ''
+    op.secsSinceStart != null ? op.secsSinceStart : '',
+    num(hr.done), num(hr.peak), num(hr.low), num(hr.avg)
   ]);
 }

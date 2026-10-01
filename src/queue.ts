@@ -80,6 +80,21 @@ export async function flush(cfg: Config): Promise<void> {
   if (read(QUEUE_KEY).length && !lastError) void flush(cfg);
 }
 
+/**
+ * Sends ops right now and reports how each went, for actions the user waits on
+ * (creating a cycle). Nothing is queued: offline, it just fails.
+ */
+export async function sendNow(cfg: Config, ops: Op[]): Promise<{ id: string; status: string; error?: string }[]> {
+  const res = await fetch(cfg.url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({ token: cfg.token, ops }),
+  });
+  const body = (await res.json()) as { ok: boolean; error?: string; data?: { results: { id: string; status: string; error?: string }[] } };
+  if (!body.ok || !body.data) throw new Error(body.error ?? `HTTP ${res.status}`);
+  return body.data.results;
+}
+
 /** Retry on reconnect and every 20 s while anything is pending. */
 export function startSync(cfg: Config): () => void {
   const tick = () => { if (read(QUEUE_KEY).length) void flush(cfg); };

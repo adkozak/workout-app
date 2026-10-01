@@ -1,22 +1,30 @@
-// AMRAP and progress stats. Estimated 1RM = weight * exp(0.03 * (reps - 1)):
-// every extra rep is worth 3% of weight. Fitted to the logged AMRAPs so that
-// e1RM does not jump when the weight steps up or down between close sessions
-// (the sheet's weight * (1 + (reps - 1) / 40) made week 3 look ~2% stronger than
-// week 2 on squat). Stays within ~2% of Epley up to 15 reps.
+// AMRAP and progress stats.
+// Estimated 1RM: from 6 reps up every extra rep is worth 3% of weight, fitted to
+// the logged AMRAPs so e1RM does not jump when the weight steps up or down between
+// close sessions. The level is pinned to the sheet's old formula,
+// weight * (1 + (reps - 1) / 40), at 10 reps, so history keeps its scale. Below 6
+// reps it eases linearly (in log) down to 1 rep = weight.
 
 import type { Cycle, History, LiftKey } from './api.ts';
 
 export interface Amrap { date: string; weight: number; reps: number; e1rm: number }
 
 const PER_REP = 0.03;
+const ANCHOR_REPS = 10;
+const ANCHOR = 1 + (ANCHOR_REPS - 1) / 40;
+const KNEE = 6;
+const LOW_PER_REP = (Math.log(ANCHOR) + PER_REP * (KNEE - ANCHOR_REPS)) / (KNEE - 1);
 
 export function e1rm(weight: number, reps: number): number {
-  return weight * Math.exp(PER_REP * (reps - 1));
+  const log = reps >= KNEE ? Math.log(ANCHOR) + PER_REP * (reps - ANCHOR_REPS) : LOW_PER_REP * (reps - 1);
+  return weight * Math.exp(log);
 }
 
 /** Fewest reps at `weight` whose estimated 1RM is strictly above `target`. */
 export function repsToBeat(target: number, weight: number): number {
-  return Math.max(1, Math.floor(Math.log(target / weight) / PER_REP + 1 + 1e-9) + 1);
+  let reps = 1;
+  while (e1rm(weight, reps) <= target + 1e-9 && reps < 100) reps++;
+  return reps;
 }
 
 /** All logged AMRAPs for a lift, oldest first. */

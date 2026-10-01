@@ -1,0 +1,16 @@
+{
+  "name": "workout-watch",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Zepp OS mini program for the 5/3/1 workout app (Amazfit Active 2)",
+  "dependencies": {
+    "@zeppos/zml": "^0.0.43"
+  },
+  "devDependencies": {
+    "@zeppos/device-types": "^3.0.0",
+    "@zeppos/zeus-cli": "^1.9.3"
+  },
+  "_moduleAliases": {
+    "zeppos-app-utils": "node_modules/@zeppos/zeus-cli/private-modules/zeppos-app-utils"
+  }
+}

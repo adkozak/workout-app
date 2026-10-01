@@ -19,7 +19,18 @@ export interface SetRow {
 
 export interface Lift { name: string; key: LiftKey | null; sets: SetRow[] }
 
-export interface Assistance { index: number; name: string; weight: number | string | null; sets: number; reps: number | string | null }
+export interface Assistance {
+  index: number; name: string; weight: number | string | null; sets: number; reps: number | string | null;
+  /** Reps typed into the round cells when a round differed from the plan (index = round). */
+  roundReps?: (number | string | null)[] | null;
+  note?: string | null;
+}
+
+/** Strength-standard targets from the cycle tab (AW6:BE12): bodyweight ratios, or reps for "pullup bw". */
+export interface Standards {
+  levels: { name: string; horizon: string | null }[];
+  rows: { name: string; targets: number[] }[];
+}
 
 export interface Day { day: number; lifts: Lift[]; assistance: Assistance[]; rounds: boolean[]; assistanceNote: string | null }
 
@@ -30,21 +41,27 @@ export interface Cycle {
   writable: boolean;
   layoutProblems: string[];
   bodyweight: number | null;
+  standards?: Standards | null;
   weeks: { week: number; days: Day[] }[];
 }
 
 export interface History {
   sessions: { row: number; date: string; lifts: Partial<Record<LiftKey, { weight: number; reps: number }>> }[];
-  trainingMaxes: { cycle: string; number: number; tm: Partial<Record<LiftKey, number>> }[];
+  trainingMaxes: { cycle: string; number: number; tm: Partial<Record<LiftKey, number>>; bodyweight?: number | null }[];
   log: Record<string, unknown>[];
 }
 
 export interface Bootstrap { cycle: Cycle; previous: Cycle | null; history: History }
 
-export interface Config { url: string; token: string }
+/** Every cycle8+ tab in full (newest first) and the target ranges from "assistance plan". */
+export interface Archive { cycles: Cycle[]; assistancePlan: { name: string; range: string }[]; fetchedAt?: string }
+
+/** `name` marks a non-production backend (e.g. "TEST"); the app shows it as a badge. */
+export interface Config { url: string; token: string; name?: string }
 
 const CONFIG_KEY = 'config';
 const CACHE_KEY = 'bootstrap';
+const ARCHIVE_KEY = 'archive';
 
 /** Accepts a full setup link or just the code after #setup= ; returns true if saved. */
 export function saveSetup(input: string): boolean {
@@ -71,18 +88,43 @@ export function getConfig(): Config | null {
   return raw ? (JSON.parse(raw) as Config) : null;
 }
 
+/** Keeps a locally changed copy (e.g. assistance planned here) until the next load from the sheet. */
+export function saveCachedBootstrap(data: Bootstrap): void {
+  localStorage.setItem(CACHE_KEY, JSON.stringify(data));
+}
+
 export function cachedBootstrap(): Bootstrap | null {
   const raw = localStorage.getItem(CACHE_KEY);
   return raw ? (JSON.parse(raw) as Bootstrap) : null;
 }
 
-export async function fetchBootstrap(cfg: Config): Promise<Bootstrap> {
-  const url = `${cfg.url}?action=bootstrap&token=${encodeURIComponent(cfg.token)}`;
+/** `cycle`: the cycle of a workout still open here; otherwise the backend picks the one in progress. */
+export async function fetchBootstrap(cfg: Config, cycle?: string): Promise<Bootstrap> {
+  const url = `${cfg.url}?action=bootstrap&token=${encodeURIComponent(cfg.token)}${cycle ? `&name=${encodeURIComponent(cycle)}` : ''}`;
   const res = await fetch(url, { redirect: 'follow' });
   const body = (await res.json()) as { ok: boolean; data?: Bootstrap; error?: string };
   if (!body.ok || !body.data) throw new Error(body.error ?? `HTTP ${res.status}`);
   localStorage.setItem(CACHE_KEY, JSON.stringify(body.data));
   return body.data;
+}
+
+export function cachedArchive(): Archive | null {
+  const raw = localStorage.getItem(ARCHIVE_KEY);
+  return raw ? (JSON.parse(raw) as Archive) : null;
+}
+
+/** All cycle tabs: several sheet reads, so only fetched for History/Progress/Cycle and cached. */
+export async function fetchArchive(cfg: Config): Promise<Archive> {
+  const res = await fetch(`${cfg.url}?action=archive&token=${encodeURIComponent(cfg.token)}`, { redirect: 'follow' });
+  const body = (await res.json()) as { ok: boolean; data?: Archive; error?: string };
+  if (!body.ok || !body.data) throw new Error(body.error ?? `HTTP ${res.status}`);
+  const data = { ...body.data, fetchedAt: new Date().toISOString() };
+  try {
+    localStorage.setItem(ARCHIVE_KEY, JSON.stringify(data));
+  } catch {
+    // Over the storage quota: keep it in memory only.
+  }
+  return data;
 }
 
 /** First day in the cycle whose AMRAPs are not all filled in. */

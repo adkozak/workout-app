@@ -3,14 +3,14 @@ import type { ComponentChildren } from 'preact';
 import type { Assistance, Bootstrap, Config, Day } from './api.ts';
 import { confetti, restOver, tap, unlockAudio } from './fx.ts';
 import { planLoadings, plateSteps, type Inventory, type Loading } from './plates.ts';
-import { enqueue, onSync, syncState, type SyncState } from './queue.ts';
+import { enqueue as enqueueOps, onSync, syncState, type SyncState } from './queue.ts';
 import {
   assistOp, buildItems, currentItem, defaultLiftOrder, effectiveStart, entryFor, extraOp, findDay, groupOf,
   plannedReps, plannedWeight, previousCompletion, restFor, rmOp, roundOp, setOp, summaryOp, timing, timingWarning,
-  tonnage, type Entry, type Extra, type Item, type Session,
+  tonnage, uuid, type Entry, type Extra, type Item, type Session,
 } from './session.ts';
 import { bestE1rm, e1rm, liftHistory, repPrAt, repsToBeat, sameWeekIn } from './stats.ts';
-import { AmrapPanel, BAR, LIFT_LABEL, LiftHeader, PlateStrip, Plates, kg, kg1, shortDate } from './ui.tsx';
+import { AmrapPanel, BAR, LIFT_LABEL, LiftHeader, PlateStrip, Plates, Stepper, kg, kg1, shortDate } from './ui.tsx';
 
 type SetItem = Item & { type: 'set' };
 type RoundItem = Item & { type: 'round' };
@@ -25,6 +25,11 @@ interface Props {
   inventory: Inventory;
   setInventory: (i: Inventory) => void;
   onClose: () => void;
+  /** Loads the sheet again without closing the workout. */
+  onReload: () => void;
+  syncing: boolean;
+  /** Latest heart rate the watch shared, if it is in this workout too. */
+  watchHr: { bpm: number; at: string } | null;
 }
 
 const liftName = (l: { key: string | null; name: string }) => (l.key ? LIFT_LABEL[l.key] : l.name);
@@ -44,7 +49,9 @@ function useNow(ms = 1000): number {
   return now;
 }
 
-export function SessionView({ cfg, data, session, setSession, inventory, setInventory, onClose }: Props) {
+export function SessionView({ cfg, data, session, setSession, inventory, setInventory, onClose, onReload, syncing, watchHr }: Props) {
+  // A practice workout never writes to the sheet.
+  const enqueue: typeof enqueueOps = (c, ...ops) => { if (!session.practice) enqueueOps(c, ...ops); };
   const day = session.cycle === data.cycle.name ? findDay(data.cycle, session.week, session.day) : null;
   const order = session.liftOrder ?? (day ? defaultLiftOrder(day) : []);
   const rounds = session.roundCount ?? day?.rounds.length ?? 0;
@@ -70,7 +77,10 @@ export function SessionView({ cfg, data, session, setSession, inventory, setInve
   if (!day) {
     return (
       <main class="empty">
-        <p>This workout ({session.cycle} week {session.week} day {session.day}) is not in the sheet any more.</p>
+        <p>This workout ({session.cycle} week {session.week} day {session.day}) is not in what the app loaded ({data.cycle.name}).
+          Nothing is lost: finished sets are in the sheet, unsent ones stay queued.
+          If the {session.cycle} tab still exists, load the sheet again.</p>
+        <button class="btn primary" disabled={syncing} onClick={onReload}>{syncing ? 'Loading…' : 'Load the sheet again'}</button>
         <button class="btn" onClick={() => { setSession(null); onClose(); }}>Discard it</button>
       </main>
     );
@@ -135,7 +145,7 @@ export function SessionView({ cfg, data, session, setSession, inventory, setInve
 
   const addExtra = (x: Omit<Extra, 'id' | 'at'>, exercise: string) => {
     tap();
-    const extra: Extra = { ...x, id: `X+${crypto.randomUUID().slice(0, 8)}`, at: new Date().toISOString() };
+    const extra: Extra = { ...x, id: `X+${uuid().slice(0, 8)}`, at: new Date().toISOString() };
     const next = { ...session, extras: [...(session.extras ?? []), extra] };
     setSession(next);
     enqueue(cfg, extraOp(extra, next, exercise));
@@ -143,7 +153,11 @@ export function SessionView({ cfg, data, session, setSession, inventory, setInve
     setRest({ endsAt: Date.now() + secs * 1000, total: secs });
   };
   const removeExtra = (x: Extra, exercise: string) => {
-    const next = { ...session, extras: (session.extras ?? []).filter((e) => e.id !== x.id) };
+    const next = {
+      ...session,
+      extras: (session.extras ?? []).filter((e) => e.id !== x.id),
+      removedExtras: [...(session.removedExtras ?? []), x.id], // so the watch's copy doesn't bring it back
+    };
     setSession(next);
     enqueue(cfg, extraOp(x, next, exercise, true));
   };
@@ -203,10 +217,10 @@ export function SessionView({ cfg, data, session, setSession, inventory, setInve
         </div>
         <div class="progress-wrap">
           <span>{doneCount}/{items.length}</span>
-          <SyncBadge sync={sync} />
+          {session.practice ? <small class="practice-tag">PRACTICE · nothing is saved</small> : <SyncBadge sync={sync} />}
         </div>
         <div class="progress"><div style={{ width: `${(doneCount / items.length) * 100}%` }} /></div>
-        <LiveStats session={session} items={items} day={day} />
+        <LiveStats session={session} items={items} day={day} watchHr={watchHr} />
       </header>
 
       <PlateStrip inventory={inventory} onChange={setInventory} />
@@ -318,8 +332,9 @@ export function SessionView({ cfg, data, session, setSession, inventory, setInve
 }
 
 /** Elapsed time, kg moved, and when you'll be done at the current pace. */
-function LiveStats({ session, items, day }: { session: Session; items: Item[]; day: Day }) {
+function LiveStats({ session, items, day, watchHr }: { session: Session; items: Item[]; day: Day; watchHr: Props['watchHr'] }) {
   const now = useNow();
+  const hr = watchHr && now - Date.parse(watchHr.at) < 60000 ? watchHr.bpm : null;
   const elapsed = (now - Date.parse(effectiveStart(session))) / 1000;
   const completions = Object.values(session.entries).filter((e) => e.status !== 'open' && e.at).length + (session.extras?.length ?? 0);
   const remaining = items.filter((it) => !entryFor(it, session, day));
@@ -329,6 +344,7 @@ function LiveStats({ session, items, day }: { session: Session; items: Item[]; d
   return (
     <div class="live">
       <span>⏱ <b>{clock(elapsed)}</b></span>
+      {hr != null && <span>⌚ ♥ <b>{hr}</b></span>}
       <span>🏋 <b>{Math.round(tonnage(items, session)).toLocaleString()}</b> kg moved</span>
       {remaining.length > 0 && <span>~{mins(left)} min left · done {eta.getHours()}:{String(eta.getMinutes()).padStart(2, '0')}</span>}
     </div>
@@ -639,16 +655,6 @@ function AssistEditor({ name, weight, reps, onSave, onCancel }: {
   );
 }
 
-function Stepper({ value, step, min, onChange, big }: { value: number; step: number; min: number; onChange: (v: number) => void; big?: boolean }) {
-  return (
-    <span class={`stepper ${big ? 'big' : ''}`}>
-      <button type="button" onClick={() => onChange(Math.max(min, +(value - step).toFixed(2)))}>−</button>
-      <b>{+value.toFixed(2)}</b>
-      <button type="button" onClick={() => onChange(+(value + step).toFixed(2))}>+</button>
-    </span>
-  );
-}
-
 function RestTimer({ rest, onChange, children }: { rest: Rest; onChange: (r: Rest | null) => void; children: ComponentChildren }) {
   const now = useNow(250);
   const buzzed = useRef(false);
@@ -731,7 +737,8 @@ function Summary({ data, session, items, day, sync, onClose }: {
         <span>⏱ <b>{mins(total)}</b> min</span>
         <span>🏋 <b>{Math.round(tonnage(items, session)).toLocaleString()}</b> kg moved</span>
         <span>✓ {count('done')} · ✎ {count('changed')} · ⤼ {count('skipped')}</span>
-        <SyncBadge sync={sync} />
+        {session.hr && <span>♥ avg <b>{session.hr.avg}</b> · max <b>{session.hr.max}</b></span>}
+        {session.practice ? <small class="practice-tag">PRACTICE · nothing is saved</small> : <SyncBadge sync={sync} />}
       </div>
 
       {amraps.map((it) => {

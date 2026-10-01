@@ -4,15 +4,18 @@ import { e1rm, repPrAt, repTable, repsToBeat, supplementalPct, trend, type Amrap
 
 const a = (date: string, weight: number, reps: number): Amrap => ({ date, weight, reps, e1rm: e1rm(weight, reps) });
 
-test('e1rm: a single is the weight, each extra rep adds 3%', () => {
-  assert.equal(e1rm(100, 1), 100);
-  assert.ok(Math.abs(e1rm(100, 11) / e1rm(100, 10) - Math.exp(0.03)) < 1e-12);
-  assert.ok(Math.abs(e1rm(75, 10) - 98.2) < 0.05); // Epley: 100
+test('e1rm: single = weight, old sheet value at 10 reps, 3% per rep from 6 up', () => {
+  const close = (x: number, y: number) => assert.ok(Math.abs(x - y) < 1e-9, `${x} != ${y}`);
+  close(e1rm(100, 1), 100);
+  close(e1rm(80, 10), 80 * (1 + 9 / 40)); // 98
+  close(e1rm(100, 14) / e1rm(100, 13), Math.exp(0.03));
+  close(e1rm(100, 7) / e1rm(100, 6), Math.exp(0.03));
+  assert.ok(e1rm(100, 5) < e1rm(100, 6) && e1rm(100, 2) > 100); // eases in below 6
 });
 
 test('repsToBeat is the smallest rep count strictly above the target', () => {
   assert.equal(repsToBeat(e1rm(80, 11), 80), 12); // 11 reps only ties
-  assert.equal(repsToBeat(99, 80), 9); // 8 reps = 98.7, 9 reps = 101.7
+  assert.equal(repsToBeat(99, 80), 11); // 10 reps = 98.0, 11 reps = 101.0
   assert.equal(repsToBeat(50, 80), 1);
 });
 
