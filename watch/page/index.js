@@ -408,11 +408,12 @@ const VIEWS = {
     }
     items.push(['Plates', () => setView({ name: 'plates', parent: view })]);
     items.push(['Finish workout', () => confirm('Finish the workout?', () => { store.finish(); lastSyncAt = 0; })]);
-    items.push(['Leave workout', () => confirm('Leave without finishing? Logged sets stay in the sheet.', () => { store.leave(); lastSyncAt = 0; })]);
+    const practice = store.session && store.session.practice;
+    items.push([practice ? 'End practice' : 'Leave workout', () => confirm(practice ? 'End the practice run? Nothing was saved.' : 'Leave without finishing? Logged sets stay in the sheet.', () => { store.leave(); lastSyncAt = 0; })]);
     text(140, 16, 200, 40, 'Menu', 28, MUTED);
     items.forEach(([label, fn], i) => button(70, 64 + i * 72, 340, 62, label, fn, {
-      size: 26, color: label.startsWith('Leave') ? RED : label.startsWith('Finish') ? GREEN : GRAY,
-      press: label.startsWith('Leave') ? RED_P : label.startsWith('Finish') ? GREEN_P : GRAY_P,
+      size: 26, color: /^(Leave|End)/.test(label) ? RED : label.startsWith('Finish') ? GREEN : GRAY,
+      press: /^(Leave|End)/.test(label) ? RED_P : label.startsWith('Finish') ? GREEN_P : GRAY_P,
     }));
     const y = 64 + items.length * 72;
     button(150, y, 180, 56, 'Back', back, { size: 24 });
