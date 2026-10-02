@@ -39,8 +39,7 @@ const py = (v) => TOP + px(v);
 const WHITE = 0xffffff, MUTED = 0x9a9a9a, ACCENT = 0x6f8cff, GOLD = 0xf5a524, RED_T = 0xff6b6b;
 const GREEN = 0x1f8f3a, GREEN_P = 0x14602a, GRAY = 0x303030, GRAY_P = 0x505050, RED = 0x8a2525, RED_P = 0x5e1818;
 const GOLD_BG = 0x5a4300, TOAST_BG = 0x1e1e1e;
-const REST_BUZZ_EVERY_MS = 6000;
-const REST_BUZZ_MAX_MS = 120000;
+const REST_BUZZ_MS = 1000; // the one strong buzz when rest runs out
 // Rest countdown ring around the screen edge, starting at 12 o'clock.
 const RING = { x: px(10), y: py(10), w: px(460), h: px(460), start_angle: -90, line_width: px(14) };
 
@@ -88,8 +87,7 @@ let envName = null; // "TEST" when paired with the test backend
 let pkgLoading = false, pkgError = null;
 let syncing = false, lastSyncAt = 0;
 let restAlarm = { id: 0, endsAt: 0 };
-let restOverAt = 0; // when the current rest ran out (0: still counting down, or no rest)
-let restBuzzAt = 0;
+let restOverAt = 0; // when the last rest ran out: the status line counts the overtime from it
 let warnedFor = 0;
 let seenOverview = {}; // exercises whose overview was dismissed, by workout + group
 let awake = null;
@@ -160,8 +158,7 @@ function autoView() {
   if (!s) return { name: 'home' };
   if (!store.day()) return { name: 'missing' };
   if (s.finishedAt) return { name: 'summary' };
-  // The rest screen stays after time is up (buzzing) until X is tapped.
-  if (store.rest) return { name: 'rest' };
+  if (store.rest && store.restLeft() > 0) return { name: 'rest' };
   const cur = store.current();
   if (!cur) return { name: 'alldone' };
   const ov = store.overview(cur);
@@ -177,14 +174,27 @@ function dismissOverview(ov) {
   rerender();
 }
 
-/** X on the rest screen (or any physical button): stop buzzing, on to the next set. */
+/** X on the rest screen (or any physical button): skip the rest, on to the next set. */
 function dismissRest() {
-  stopBuzz();
   store.endRest();
   restOverAt = 0;
   syncRestAlarm();
   view = null;
   rerender();
+}
+
+/**
+ * Rest ran out: one strong buzz (stopped after a moment, since the "reminder" scene
+ * otherwise keeps going) and straight on to the next set; its status line shows the overtime.
+ */
+function restRanOut(quiet = false) {
+  if (!quiet) {
+    buzz(VIBRATOR_SCENE_STRONG_REMINDER);
+    setTimeout(stopBuzz, REST_BUZZ_MS);
+  }
+  store.endRest();
+  restOverAt = Date.now();
+  syncRestAlarm();
 }
 
 function render() {
@@ -356,19 +366,14 @@ const VIEWS = {
   rest() {
     const r = store.rest;
     const left = store.restLeft();
-    const over = left <= 0;
-    add(widget.ARC, { ...RING, end_angle: 270, color: over ? GOLD : 0x202020 });
-    if (!over) ticking.arc = add(widget.ARC, { ...RING, end_angle: -90 + 360 * Math.max(0, left / r.total), color: GREEN });
-    text(140, 62, 200, 36, over ? 'GO!' : 'REST', 28, over ? GOLD : MUTED);
-    ticking.rest = text(60, 100, 360, 124, over ? `+${clock(-left)}` : clock(left), 112, over ? GOLD : WHITE);
+    add(widget.ARC, { ...RING, end_angle: 270, color: 0x202020 });
+    ticking.arc = add(widget.ARC, { ...RING, end_angle: -90 + 360 * Math.max(0, left / r.total), color: GREEN });
+    text(140, 62, 200, 36, 'REST', 28, MUTED);
+    ticking.rest = text(60, 100, 360, 124, clock(left), 112);
     ticking.hr = text(120, 224, 240, 42, store.lastHr ? `${store.lastHr.bpm} bpm` : '', 32, RED_T);
     text(50, 262, 380, 38, nextLine(), 26, MUTED);
-    if (over) {
-      greenButton(90, 302, 300, 110, 'X', dismissRest, 64);
-    } else {
-      button(95, 312, 140, 100, '+30s', () => { store.addRest(30); syncRestAlarm(); rerender(); }, { size: 34 });
-      greenButton(245, 312, 140, 100, 'X', dismissRest, 56);
-    }
+    button(95, 312, 140, 100, '+30s', () => { store.addRest(30); syncRestAlarm(); rerender(); }, { size: 34 });
+    greenButton(245, 312, 140, 100, 'X', dismissRest, 56);
   },
 
   overview({ ov }) {
@@ -627,25 +632,10 @@ function tick() {
       warnedFor = store.rest.endsAt;
       buzz(VIBRATOR_SCENE_SHORT_MIDDLE);
     }
-    if (left < -600) {
-      // Ran out 10+ minutes ago (app closed meanwhile): drop it quietly.
-      dismissRest();
-    } else if (left <= 0) {
-      // Time's up: stay on the rest screen and buzz every few seconds until X, for at most 2 minutes.
-      if (!restOverAt) {
-        restOverAt = now;
-        restBuzzAt = now;
-        buzz(VIBRATOR_SCENE_STRONG_REMINDER);
-        syncRestAlarm();
-        if (!view) render();
-      } else if (now - restOverAt < REST_BUZZ_MAX_MS && now - restBuzzAt >= REST_BUZZ_EVERY_MS) {
-        restBuzzAt = now;
-        buzz(VIBRATOR_SCENE_STRONG_REMINDER);
-      } else if (now - restOverAt >= REST_BUZZ_MAX_MS && restBuzzAt) {
-        restBuzzAt = 0;
-        stopBuzz();
-      }
-      if (ticking.rest) ticking.rest.setProperty(prop.TEXT, `+${clock(-left)}`);
+    if (left <= 0) {
+      // Long gone (the app was closed meanwhile): no buzz now.
+      restRanOut(left < -60);
+      if (!view) render();
     } else {
       if (ticking.rest) ticking.rest.setProperty(prop.TEXT, clock(left));
       if (ticking.arc) ticking.arc.setProperty(prop.MORE, { ...RING, end_angle: -90 + 360 * Math.max(0, left / store.rest.total), color: GREEN });
@@ -755,10 +745,8 @@ Page(
     onInit(params) {
       page = this;
       if (params && String(params).indexOf('rest') >= 0) {
-        // Reopened by the backup alarm: show the rest screen, buzzing, until X.
-        buzz(VIBRATOR_SCENE_STRONG_REMINDER);
-        restOverAt = Date.now();
-        restBuzzAt = restOverAt;
+        // Reopened by the backup alarm: the rest is over.
+        restRanOut();
       }
     },
 

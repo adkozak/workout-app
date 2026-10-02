@@ -72,9 +72,8 @@ The rule: **every action during a session is one tap or one button press**, with
 
 **Rest screen**
 - A countdown ring in huge digits, with heart rate and "recovered to X bpm" underneath.
-- A strong vibration at 0 and a light one at −10 s.
 - +30 s button; X (or any physical button) skips the rest.
-- When time is up the rest screen stays, showing the overtime in gold and buzzing every 6 s (for up to 2 minutes) until X. X stops the buzzing and moves on.
+- A short buzz 10 s before the end, then one strong 1 s buzz when time is up. The watch goes straight to the next set, whose status line counts the overtime (`rest +0:12`).
 - Rest is 1:30 after every working set and assistance round, with none between warm-up sets (`restFor()`).
 
 **Exercise overview**
