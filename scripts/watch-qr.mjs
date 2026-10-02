@@ -67,6 +67,9 @@ const html = `<!doctype html><meta charset="utf-8"><title>Workout 531: install o
 mkdirSync(join(watchDir, 'dist'), { recursive: true });
 const out = join(watchDir, 'dist', 'install-qr.html');
 writeFileSync(out, html);
-console.log(`\nInstall QR saved: ${out}`);
+// The bare QR as an image too, with a new name each run (for showing it in a chat).
+const svg = join(tmpdir(), `watch-install-qr-${Date.now()}.svg`);
+writeFileSync(svg, `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" width="${size * 10}" height="${size * 10}" shape-rendering="crispEdges"><rect width="${size}" height="${size}" fill="#fff"/><g fill="#000">${rects}</g></svg>`);
+console.log(`\nInstall QR saved: ${out}\nQR image: ${svg}`);
 const opened = spawnSync('xdg-open', [out], { stdio: 'ignore' });
 if (opened.status !== 0) console.log('Open that file in a browser to scan it.');
