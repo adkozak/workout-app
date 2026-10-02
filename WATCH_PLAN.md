@@ -73,8 +73,17 @@ The rule: **every action during a session is one tap or one button press**, with
 **Rest screen**
 - A countdown ring in huge digits, with heart rate and "recovered to X bpm" underneath.
 - A strong vibration at 0 and a light one at −10 s.
-- Tap for +30 s. Press DONE to skip the rest.
-- Rest defaults come from `restFor()` (3 min main, 2 min supplemental, 90 s assistance).
+- +30 s button; X (or any physical button) skips the rest.
+- When time is up the rest screen stays, showing the overtime in gold and buzzing every 6 s (for up to 2 minutes) until X. X stops the buzzing and moves on.
+- Rest is 1:30 after every working set and assistance round, with none between warm-up sets (`restFor()`).
+
+**Exercise overview**
+- Before the first set of each lift, one screen lists:
+  - the warm-ups
+  - the three main sets with kg per side
+  - the 5×5
+- Before the first assistance round, it lists the four exercises with weight × reps.
+- START (or a physical button) begins.
 
 **Summary**
 - Duration, volume, PRs (with a vibration pattern), average and max heart rate, and time in zones.

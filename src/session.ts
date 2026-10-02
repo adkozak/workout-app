@@ -230,14 +230,12 @@ export function plannedReps(row: SetRow): number {
   return parseInt(row.reps, 10) || 0;
 }
 
-/** Default rest after an item, in seconds. */
+/** Rest after every working set and assistance round, in seconds. */
+export const REST_SECS = 90;
+
+/** Rest after an item, in seconds: none between warm-up sets, 1:30 after everything else. */
 export function restFor(item: Item): number {
-  if (item.type === 'round') return 90;
-  switch (item.row.kind) {
-    case 'warmup': return 60;
-    case 'supplemental': return 120;
-    default: return 180;
-  }
+  return item.type === 'set' && item.row.kind === 'warmup' ? 0 : REST_SECS;
 }
 
 export interface Op { id: string; type: string; [k: string]: unknown }

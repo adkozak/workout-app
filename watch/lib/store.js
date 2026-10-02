@@ -9,7 +9,7 @@
 import {
   DEFAULT_INVENTORY, bestE1rm, buildItems, currentItem, defaultLiftOrder, e1rm, effectiveStart, entryFor,
   extraOp, findDay, groupOf, localDate, newSession, nextDay, planLoadings, plannedReps, plannedWeight,
-  previousCompletion, reconcile, repPrAt, repsToBeat, restFor, rmOp, roundOp, sessionKey, setOp, summaryOp,
+  previousCompletion, reconcile, repPrAt, repsToBeat, REST_SECS, restFor, rmOp, roundOp, sessionKey, setOp, summaryOp,
   timing, timingWarning, tonnage, touch, uuid, canon,
 } from './shared.js';
 import { clock, kg, kg1, liftName } from './format.js';
@@ -237,7 +237,11 @@ export class Store {
     this.lastAction = entry ? { item } : null;
     if (!entry) { this.endRest(); return null; }
     if (entry.status === 'skipped') return null;
-    if (rest) this.startRest(restFor(item));
+    if (rest) {
+      const secs = restFor(item);
+      if (secs > 0) this.startRest(secs);
+      else this.endRest(); // no rest between warm-up sets
+    }
     if (item.type === 'set' && item.row.kind === 'amrap' && entry.reps != null && item.liftRef.key) return this.celebrate(item, entry);
     const w = timingWarning(item, timing(this.session, entry.at, item.id).secsSincePrevious, this.items(), this.session, day);
     if (w && w.kind === 'double') {
@@ -309,7 +313,43 @@ export class Store {
     this.setSession(next);
     const lift = group === 'A' ? null : day.lifts[Number(group.slice(1)) - 1];
     this.enqueue(extraOp(extra, this.session, lift ? lift.key || lift.name : 'assistance'));
-    this.startRest(group === 'A' ? 90 : 120);
+    this.startRest(REST_SECS);
+  }
+
+  /**
+   * What an exercise holds, offered before its first set: for a lift the warm-ups,
+   * the three main sets and the 5x5; for assistance each exercise with weight x reps.
+   * Null once anything in the group is logged, or if `item` isn't its first item.
+   */
+  overview(item) {
+    const day = this.day();
+    if (!item || !day) return null;
+    const group = groupOf(item);
+    const its = this.items().filter((it) => groupOf(it) === group);
+    if (its[0].id !== item.id || its.some((it) => this.entry(it))) return null;
+    if (item.type === 'round') {
+      return {
+        group, kind: 'assistance', rounds: its.length,
+        rows: day.assistance.map((a) => {
+          const x = this.session.entries[`X:${a.index}`];
+          const weight = x && x.weight != null ? x.weight : typeof a.weight === 'number' ? a.weight : null;
+          return { name: x && x.name ? x.name : a.name, weight, reps: x && x.reps != null ? x.reps : a.reps };
+        }),
+      };
+    }
+    const perSide = (it) => {
+      const l = this.loadingOf(it);
+      return l ? (l.loading.total - BAR) / 2 : null;
+    };
+    const firstOf = (kind) => its.filter((it) => it.row.kind === kind && it.sub === 0);
+    const supp = firstOf('supplemental')[0];
+    return {
+      group, kind: 'lift', name: liftName(item.liftRef), tm: item.liftRef.key ? this.cycle.tm[item.liftRef.key] : null,
+      warmups: firstOf('warmup').map((it) => this.planned(it).weight),
+      main: its.filter((it) => it.row.kind === 'main' || it.row.kind === 'amrap')
+        .map((it) => ({ weight: this.planned(it).weight, reps: it.row.reps, perSide: perSide(it) })),
+      supplemental: supp ? { weight: this.planned(supp).weight, sets: supp.row.sets, reps: supp.row.reps, perSide: perSide(supp) } : null,
+    };
   }
 
   /** Lift groups and assistance with progress, for the "go to" list. */

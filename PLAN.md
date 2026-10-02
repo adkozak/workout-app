@@ -35,7 +35,7 @@ Phone (installable web app / PWA)  <--JSON over HTTPS-->  Apps Script API (bound
    - Loadings are planned across the lift's whole sequence (warm-ups → main → 5x5) to **minimise plates put on / taken off**, not per set. The sleeve is a stack (outer plates come off first), so 20+5 → 20+5+5 is 1 change where 20+5 → 20+10 is 2. Only plates you own are used. Implemented in `src/plates.ts`.
    - Gym availability changes day to day. Default: plenty of 20/15/10/5, one pair of 2.5 and 1.25. A plate strip on the session screen lets you tap a size to mark it gone or set how many pairs are free today; the rest of the session replans instantly. The last-used state is remembered.
    - Replanned live after a change (e.g. the 5x5 weight moves after the AMRAP, or you load something else).
-3. **Tap to complete, long-press to deviate.** A tap checks the set in the sheet and starts the **rest timer** (defaults: 3 min main, 2 min supplemental, 90 s assistance). Phone vibrates when rest ends. Screen stays awake. Long-press (or a "changed / skip" button) opens weight/reps steppers prefilled from the plan, plus a note field.
+3. **Tap to complete, long-press to deviate.** A tap checks the set in the sheet and starts the **rest timer** (1:30 after working sets and assistance rounds, none between warm-ups). Phone vibrates when rest ends. Screen stays awake. Long-press (or a "changed / skip" button) opens weight/reps steppers prefilled from the plan, plus a note field.
 4. **AMRAP helper.** Before the AMRAP set it shows:
    - reps needed to **beat your best estimated 1RM** for that lift,
    - your rep PR at this exact weight,

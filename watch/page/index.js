@@ -39,6 +39,8 @@ const py = (v) => TOP + px(v);
 const WHITE = 0xffffff, MUTED = 0x9a9a9a, ACCENT = 0x6f8cff, GOLD = 0xf5a524, RED_T = 0xff6b6b;
 const GREEN = 0x1f8f3a, GREEN_P = 0x14602a, GRAY = 0x303030, GRAY_P = 0x505050, RED = 0x8a2525, RED_P = 0x5e1818;
 const GOLD_BG = 0x5a4300, TOAST_BG = 0x1e1e1e;
+const REST_BUZZ_EVERY_MS = 6000;
+const REST_BUZZ_MAX_MS = 120000;
 // Rest countdown ring around the screen edge, starting at 12 o'clock.
 const RING = { x: px(10), y: py(10), w: px(460), h: px(460), start_angle: -90, line_width: px(14) };
 
@@ -59,6 +61,10 @@ const storage = {
 const store = new Store(storage);
 let vibrator = null;
 let heart = null;
+
+function stopBuzz() {
+  try { if (vibrator) vibrator.stop(); } catch (e) { /* nothing running */ }
+}
 
 function buzz(mode) {
   try {
@@ -82,8 +88,10 @@ let envName = null; // "TEST" when paired with the test backend
 let pkgLoading = false, pkgError = null;
 let syncing = false, lastSyncAt = 0;
 let restAlarm = { id: 0, endsAt: 0 };
-let restOverAt = 0;
+let restOverAt = 0; // when the current rest ran out (0: still counting down, or no rest)
+let restBuzzAt = 0;
 let warnedFor = 0;
+let seenOverview = {}; // exercises whose overview was dismissed, by workout + group
 let awake = null;
 let timer = null;
 let renderQueued = false;
@@ -152,10 +160,31 @@ function autoView() {
   if (!s) return { name: 'home' };
   if (!store.day()) return { name: 'missing' };
   if (s.finishedAt) return { name: 'summary' };
-  if (store.rest && store.restLeft() > 0) return { name: 'rest' };
+  // The rest screen stays after time is up (buzzing) until X is tapped.
+  if (store.rest) return { name: 'rest' };
   const cur = store.current();
   if (!cur) return { name: 'alldone' };
+  const ov = store.overview(cur);
+  if (ov && !seenOverview[overviewKey(ov)]) return { name: 'overview', ov };
   return cur.type === 'round' ? { name: 'round', item: cur } : { name: 'set', item: cur };
+}
+
+const overviewKey = (ov) => `${store.session.cycle}/${store.session.week}/${store.session.day}/${store.session.startedAt}|${ov.group}`;
+
+function dismissOverview(ov) {
+  seenOverview[overviewKey(ov)] = true;
+  view = null;
+  rerender();
+}
+
+/** X on the rest screen (or any physical button): stop buzzing, on to the next set. */
+function dismissRest() {
+  stopBuzz();
+  store.endRest();
+  restOverAt = 0;
+  syncRestAlarm();
+  view = null;
+  rerender();
 }
 
 function render() {
@@ -207,16 +236,17 @@ const setLabel = (item) => {
   return `${Math.round((item.row.pct || 0) * 100)}%`;
 };
 
-/** "20 15 5" per side and the change from the previous set, e.g. "-5 +10 each side". */
+/** kg per side ((total - bar) / 2), the plates "20 5 2.5", and the change from the previous set ("-5 +10"). */
 function plateLines(item) {
   const l = store.loadingOf(item);
   if (!l) return null;
   const perSide = (l.loading.total - BAR) / 2;
-  const load = perSide > 0 ? `${kg(perSide)}/side: ${l.loading.perSide.join(' ')}` : 'empty bar';
   const { remove, add: put } = plateSteps(l.prev, l.loading.perSide);
   const steps = [...remove.map((p) => `-${p}`), ...put.map((p) => `+${p}`)].join(' ');
   return {
-    load: l.loading.exact ? load : `${load} (only ${kg(l.loading.total)})`,
+    perSide,
+    side: perSide > 0 ? `${kg(perSide)} / side` : 'empty bar',
+    plates: `${l.loading.perSide.join(' ')}${l.loading.exact ? '' : ` (only ${kg(l.loading.total)})`}`,
     steps: steps ? `${steps} each side` : l.loading.perSide.length ? 'plates stay' : '',
     changed: !!steps,
   };
@@ -292,11 +322,11 @@ const VIEWS = {
     statusLine();
     const p = store.planned(item);
     text(60, 60, 360, 40, `${liftName(item.liftRef).toUpperCase()} · ${setLabel(item)}`, 30, ACCENT);
-    text(30, 98, 420, 104, `${kg(p.weight)}x${item.row.reps}`, 88);
+    text(30, 96, 420, 92, `${kg(p.weight)}x${item.row.reps}`, 80);
     const pl = plateLines(item);
     if (pl) {
-      text(40, 200, 400, 40, pl.load, 30);
-      text(60, 240, 360, 36, pl.steps, 26, pl.changed ? GOLD : MUTED);
+      text(40, 186, 400, 56, pl.side, 50);
+      text(40, 244, 400, 36, [pl.perSide > 0 ? pl.plates : '', pl.steps].filter(Boolean).join('   '), 24, pl.changed ? GOLD : MUTED);
     }
     if (item.row.kind === 'amrap') {
       greenButton(90, 285, 300, 106, 'AMRAP >', () => setView({ name: 'amrap', item, reps: store.amrapInfo(item).start }), 42);
@@ -325,14 +355,41 @@ const VIEWS = {
 
   rest() {
     const r = store.rest;
-    add(widget.ARC, { ...RING, end_angle: 270, color: 0x202020 });
-    ticking.arc = add(widget.ARC, { ...RING, end_angle: -90 + 360 * Math.max(0, store.restLeft() / r.total), color: GREEN });
-    text(140, 62, 200, 36, 'REST', 28, MUTED);
-    ticking.rest = text(60, 100, 360, 124, clock(store.restLeft()), 112);
+    const left = store.restLeft();
+    const over = left <= 0;
+    add(widget.ARC, { ...RING, end_angle: 270, color: over ? GOLD : 0x202020 });
+    if (!over) ticking.arc = add(widget.ARC, { ...RING, end_angle: -90 + 360 * Math.max(0, left / r.total), color: GREEN });
+    text(140, 62, 200, 36, over ? 'GO!' : 'REST', 28, over ? GOLD : MUTED);
+    ticking.rest = text(60, 100, 360, 124, over ? `+${clock(-left)}` : clock(left), 112, over ? GOLD : WHITE);
     ticking.hr = text(120, 224, 240, 42, store.lastHr ? `${store.lastHr.bpm} bpm` : '', 32, RED_T);
-    text(50, 268, 380, 38, nextLine(), 26, MUTED);
-    button(95, 318, 140, 90, '+30s', () => { store.addRest(30); syncRestAlarm(); rerender(); }, { size: 34 });
-    greenButton(245, 318, 140, 90, 'Go', () => { store.endRest(); syncRestAlarm(); rerender(); }, 36);
+    text(50, 262, 380, 38, nextLine(), 26, MUTED);
+    if (over) {
+      greenButton(90, 302, 300, 110, 'X', dismissRest, 64);
+    } else {
+      button(95, 312, 140, 100, '+30s', () => { store.addRest(30); syncRestAlarm(); rerender(); }, { size: 34 });
+      greenButton(245, 312, 140, 100, 'X', dismissRest, 56);
+    }
+  },
+
+  overview({ ov }) {
+    if (ov.kind === 'assistance') {
+      text(60, 50, 360, 40, `ASSISTANCE · ${ov.rounds}x`, 30, ACCENT);
+      ov.rows.slice(0, 4).forEach((a, i) => {
+        text(36, 96 + i * 48, 408, 44, `${a.name}  ${a.weight ? `${kg(a.weight)}kg ` : ''}x${a.reps == null ? '?' : a.reps}`, 26);
+      });
+    } else {
+      text(60, 44, 360, 40, `${ov.name.toUpperCase()}${ov.tm ? `  TM ${kg(ov.tm)}` : ''}`, 28, ACCENT);
+      if (ov.warmups.length) text(50, 84, 380, 32, `warm-up ${ov.warmups.map(kg).join(' ')}`, 24, MUTED);
+      ov.main.forEach((m, i) => {
+        text(30, 118 + i * 46, 420, 44, `${kg(m.weight)}x${m.reps}${m.perSide > 0 ? `   ${kg(m.perSide)}/side` : ''}`, 34);
+      });
+      if (ov.supplemental) {
+        const sp = ov.supplemental;
+        text(40, 258, 400, 34, `${sp.sets}x${sp.reps} at ${kg(sp.weight)}${sp.perSide > 0 ? `  ${kg(sp.perSide)}/side` : ''}`, 26, MUTED);
+      }
+    }
+    greenButton(90, 300, 300, 96, 'START', () => dismissOverview(ov), 44);
+    button(185, 402, 110, 48, 'More', () => setView({ name: 'menu' }), { size: 22 });
   },
 
   amrap(v) {
@@ -570,12 +627,25 @@ function tick() {
       warnedFor = store.rest.endsAt;
       buzz(VIBRATOR_SCENE_SHORT_MIDDLE);
     }
-    if (left <= 0) {
-      buzz(VIBRATOR_SCENE_STRONG_REMINDER);
-      store.endRest();
-      restOverAt = now;
-      syncRestAlarm();
-      if (!view) render();
+    if (left < -600) {
+      // Ran out 10+ minutes ago (app closed meanwhile): drop it quietly.
+      dismissRest();
+    } else if (left <= 0) {
+      // Time's up: stay on the rest screen and buzz every few seconds until X, for at most 2 minutes.
+      if (!restOverAt) {
+        restOverAt = now;
+        restBuzzAt = now;
+        buzz(VIBRATOR_SCENE_STRONG_REMINDER);
+        syncRestAlarm();
+        if (!view) render();
+      } else if (now - restOverAt < REST_BUZZ_MAX_MS && now - restBuzzAt >= REST_BUZZ_EVERY_MS) {
+        restBuzzAt = now;
+        buzz(VIBRATOR_SCENE_STRONG_REMINDER);
+      } else if (now - restOverAt >= REST_BUZZ_MAX_MS && restBuzzAt) {
+        restBuzzAt = 0;
+        stopBuzz();
+      }
+      if (ticking.rest) ticking.rest.setProperty(prop.TEXT, `+${clock(-left)}`);
     } else {
       if (ticking.rest) ticking.rest.setProperty(prop.TEXT, clock(left));
       if (ticking.arc) ticking.arc.setProperty(prop.MORE, { ...RING, end_angle: -90 + 360 * Math.max(0, left / store.rest.total), color: GREEN });
@@ -663,7 +733,8 @@ function primary() {
   if (v.name === 'set' && v.item.row.kind !== 'amrap') { act(() => store.done(v.item)); return true; }
   if (v.name === 'set') { setView({ name: 'amrap', item: v.item, reps: store.amrapInfo(v.item).start }); return true; }
   if (v.name === 'round') { act(() => store.done(v.item)); return true; }
-  if (v.name === 'rest') { store.endRest(); syncRestAlarm(); rerender(); return true; }
+  if (v.name === 'rest') { dismissRest(); return true; }
+  if (v.name === 'overview') { dismissOverview(v.ov); return true; }
   if (v.name === 'amrap') {
     const info = store.amrapInfo(v.item);
     view = null;
@@ -684,9 +755,10 @@ Page(
     onInit(params) {
       page = this;
       if (params && String(params).indexOf('rest') >= 0) {
+        // Reopened by the backup alarm: show the rest screen, buzzing, until X.
         buzz(VIBRATOR_SCENE_STRONG_REMINDER);
-        store.endRest();
         restOverAt = Date.now();
+        restBuzzAt = restOverAt;
       }
     },
 

@@ -62,7 +62,7 @@ test('the watch picks the next day, squat first, and plans plates', () => {
   assert.equal(loading.total, store.planned(cur).weight);
 });
 
-test('done logs the set with heart rate, starts rest, queues an op; undo reverts', () => {
+test('done logs the set with heart rate, queues an op; undo reverts; no rest after warm-ups, 1:30 after the rest', () => {
   const { store, now } = startedStore();
   for (const bpm of [95, 110, 128, 131, 120]) { now.advance(5); store.addHr(bpm); }
   const cur = store.current();
@@ -70,7 +70,8 @@ test('done logs the set with heart rate, starts rest, queues an op; undo reverts
   const e = store.session.entries[cur.id];
   assert.equal(e.status, 'done');
   assert.deepEqual(e.hr, { done: 120, peak: 131, low: 95 });
-  assert.equal(store.restLeft(), 60);
+  assert.equal(cur.row.kind, 'warmup');
+  assert.equal(store.rest, null);
   assert.equal(store.ops.length, 1);
   assert.equal(store.ops[0].type, 'set');
   assert.deepEqual(store.ops[0].hr, e.hr);
@@ -81,6 +82,33 @@ test('done logs the set with heart rate, starts rest, queues an op; undo reverts
   assert.equal(store.current().id, cur.id);
   assert.equal(store.rest, null);
   assert.equal(store.ops[1].status, 'undo');
+
+  while (store.current().row.kind === 'warmup') { now.advance(60); store.done(store.current()); }
+  now.advance(60);
+  store.done(store.current()); // first main set
+  assert.equal(store.restLeft(), 90);
+});
+
+test('each exercise opens with an overview until its first set is logged', () => {
+  const { store, now } = startedStore();
+  const first = store.current();
+  const ov = store.overview(first);
+  assert.equal(ov.kind, 'lift');
+  assert.equal(ov.warmups.length, 3);
+  assert.deepEqual(ov.main.map((m) => m.reps), ['3', '3', '3+']); // week 2
+  assert.ok(ov.main.every((m) => m.perSide === (m.weight - 20) / 2));
+  assert.equal(ov.supplemental.sets, 5);
+  now.advance(30);
+  store.done(first);
+  assert.equal(store.overview(store.current()), null, 'not after the first set');
+
+  // Jump to assistance: its first round gets the assistance overview.
+  const round = store.items().find((it) => it.type === 'round');
+  const a = store.overview(round);
+  assert.equal(a.kind, 'assistance');
+  assert.equal(a.rounds, 5);
+  assert.deepEqual(a.rows[0], { name: 'Dips', weight: 10, reps: 8 });
+  assert.equal(store.overview(store.items().find((it) => it.type === 'round' && it.round === 1)), null, 'only before the first round');
 });
 
 test('a quick second tap is flagged as a possible double tap', () => {

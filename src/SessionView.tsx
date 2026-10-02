@@ -6,7 +6,7 @@ import { planLoadings, plateSteps, type Inventory, type Loading } from './plates
 import { enqueue as enqueueOps, onSync, syncState, type SyncState } from './queue.ts';
 import {
   assistOp, buildItems, currentItem, defaultLiftOrder, effectiveStart, entryFor, extraOp, findDay, groupOf,
-  plannedReps, plannedWeight, previousCompletion, restFor, rmOp, roundOp, setOp, summaryOp, timing, timingWarning,
+  plannedReps, plannedWeight, previousCompletion, REST_SECS, restFor, rmOp, roundOp, setOp, summaryOp, timing, timingWarning,
   tonnage, uuid, type Entry, type Extra, type Item, type Session,
 } from './session.ts';
 import { bestE1rm, e1rm, liftHistory, repPrAt, repsToBeat, sameWeekIn } from './stats.ts';
@@ -117,7 +117,7 @@ export function SessionView({ cfg, data, session, setSession, inventory, setInve
     enqueue(cfg, opFor(item, next, entry));
     if (entry && entry.status !== 'skipped') {
       const secs = restFor(item);
-      setRest({ endsAt: Date.now() + secs * 1000, total: secs });
+      setRest(secs > 0 ? { endsAt: Date.now() + secs * 1000, total: secs } : null);
     }
     if (item.type === 'set' && item.row.kind === 'amrap' && entry?.reps && entry.status !== 'skipped' && item.liftRef.key) {
       celebrate(item, entry);
@@ -149,7 +149,7 @@ export function SessionView({ cfg, data, session, setSession, inventory, setInve
     const next = { ...session, extras: [...(session.extras ?? []), extra] };
     setSession(next);
     enqueue(cfg, extraOp(extra, next, exercise));
-    const secs = x.group === 'A' ? 90 : 120;
+    const secs = REST_SECS;
     setRest({ endsAt: Date.now() + secs * 1000, total: secs });
   };
   const removeExtra = (x: Extra, exercise: string) => {
