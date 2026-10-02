@@ -90,6 +90,7 @@ let restAlarm = { id: 0, endsAt: 0 };
 let restOverAt = 0; // when the last rest ran out: the status line counts the overtime from it
 let warnedFor = 0;
 let seenOverview = {}; // exercises whose overview was dismissed, by workout + group
+let staleOk = null; // an old open workout you chose to continue anyway
 let awake = null;
 let timer = null;
 let renderQueued = false;
@@ -158,6 +159,7 @@ function autoView() {
   if (!s) return { name: 'home' };
   if (!store.day()) return { name: 'missing' };
   if (s.finishedAt) return { name: 'summary' };
+  if (store.stale() && staleOk !== s.startedAt) return { name: 'stale' };
   if (store.rest && store.restLeft() > 0) return { name: 'rest' };
   const cur = store.current();
   if (!cur) return { name: 'alldone' };
@@ -262,6 +264,16 @@ function plateLines(item) {
   };
 }
 
+/** This workout's assistance as planned (or as changed on the phone): index, name, numeric reps or text. */
+function roundPlan() {
+  return store.day().assistance.slice(0, 4).map((a) => {
+    const x = store.session.entries[`X:${a.index}`];
+    const reps = x && x.reps != null ? x.reps : a.reps;
+    const n = typeof reps === 'number' ? reps : /^\d+$/.test(String(reps == null ? '' : reps).trim()) ? Number(reps) : reps;
+    return { index: a.index, name: x && x.name ? x.name : a.name, reps: n };
+  });
+}
+
 function nextLine() {
   const cur = store.current();
   if (!cur) return 'then: finish';
@@ -360,7 +372,47 @@ const VIEWS = {
       text(50, 104 + i * 44, 380, 42, `${name}  ${w ? `${kg(w)}kg ` : ''}x${reps == null ? '?' : reps}`, 28);
     });
     greenButton(90, 285, 300, 106, 'DONE', () => act(() => store.done(item)), 50);
-    button(185, 398, 110, 50, 'More', () => setView({ name: 'menu' }), { size: 24 });
+    button(128, 398, 110, 50, 'Reps', () => setView({ name: 'roundreps', item, reps: roundPlan().map((x) => x.reps) }), { size: 24 });
+    button(242, 398, 110, 50, 'More', () => setView({ name: 'menu' }), { size: 24 });
+  },
+
+  /** A round that didn't go to plan: reps per exercise, then log it. */
+  roundreps(v) {
+    text(90, 14, 300, 40, `Round ${v.item.round + 1}: reps done`, 26, ACCENT);
+    const plan = roundPlan();
+    plan.forEach((x, i) => {
+      const y = 60 + i * 86;
+      text(40, y, 400, 30, x.name, 22, MUTED);
+      if (typeof v.reps[i] !== 'number') { text(140, y + 30, 200, 50, String(x.reps == null ? '?' : x.reps), 32); return; }
+      const value = text(170, y + 30, 140, 50, String(v.reps[i]), 36);
+      const change = (d) => {
+        v.reps[i] = Math.max(0, v.reps[i] + d);
+        value.setProperty(prop.MORE, { text: String(v.reps[i]), color: v.reps[i] === x.reps ? WHITE : GOLD });
+        buzz(VIBRATOR_SCENE_SHORT_LIGHT);
+      };
+      button(80, y + 30, 90, 50, '-', () => change(-1), { size: 36 });
+      button(310, y + 30, 90, 50, '+', () => change(1), { size: 36 });
+    });
+    const y = 70 + plan.length * 86;
+    greenButton(90, y, 300, 84, 'Log round', () => {
+      const detail = plan.map((x, i) => ({ index: x.index, reps: v.reps[i] }))
+        .filter((d, i) => typeof d.reps === 'number' && d.reps !== plan[i].reps);
+      view = null;
+      act(() => store.done(v.item, detail));
+    }, 32);
+    button(150, y + 94, 180, 56, 'Back', back, { size: 24 });
+    add(widget.FILL_RECT, { x: 0, y: py(y + 160), w: px(10), h: px(100), color: 0x000000 });
+  },
+
+  /** A workout still open from an earlier day. */
+  stale() {
+    const s = store.session;
+    const p = store.progress();
+    wrapText(50, 60, 380, 110, `Workout from ${s.date.slice(8)}.${Number(s.date.slice(5, 7))}. still open`, 32);
+    text(60, 168, 360, 36, `${p.done}/${p.total} logged`, 26, MUTED);
+    greenButton(90, 214, 300, 84, 'Finish it', () => { store.finish(); lastSyncAt = 0; rerender(); }, 34);
+    button(70, 310, 165, 60, 'Continue', () => { staleOk = s.startedAt; rerender(); }, { size: 24 });
+    redButton(245, 310, 165, 60, 'Leave', () => { store.leave(); lastSyncAt = 0; rerender(); }, 24);
   },
 
   rest() {
@@ -378,7 +430,8 @@ const VIEWS = {
 
   overview({ ov }) {
     if (ov.kind === 'assistance') {
-      text(60, 50, 360, 40, `ASSISTANCE · ${ov.rounds}x`, 30, ACCENT);
+      const unplanned = ov.rows.some((a) => a.reps == null);
+      text(60, 50, 360, 40, unplanned ? 'Not planned: plan on phone' : `ASSISTANCE · ${ov.rounds}x`, unplanned ? 24 : 30, unplanned ? GOLD : ACCENT);
       ov.rows.slice(0, 4).forEach((a, i) => {
         text(36, 96 + i * 48, 408, 44, `${a.name}  ${a.weight ? `${kg(a.weight)}kg ` : ''}x${a.reps == null ? '?' : a.reps}`, 26);
       });
@@ -598,7 +651,7 @@ function handleFeedback(fb, offerUndo = false) {
     buzz(VIBRATOR_SCENE_SHORT_MIDDLE);
     showToast({ text: fb.text, sub: fb.sub, action: fb.action }, 9000);
   } else if (fb && fb.kind === 'info') {
-    showToast({ text: fb.text, sub: fb.sub }, 5000);
+    showToast({ text: fb.text, sub: fb.sub, action: fb.action }, fb.action ? 7000 : 5000);
   } else if (offerUndo && store.lastAction) {
     showToast({ text: 'Logged', sub: 'tap here to undo', action: () => store.undo() }, 3500);
   }

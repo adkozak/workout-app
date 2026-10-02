@@ -5,7 +5,7 @@ import { confetti, restOver, tap, unlockAudio } from './fx.ts';
 import { planLoadings, plateSteps, type Inventory, type Loading } from './plates.ts';
 import { enqueue as enqueueOps, onSync, syncState, type SyncState } from './queue.ts';
 import {
-  assistOp, buildItems, currentItem, defaultLiftOrder, effectiveStart, entryFor, extraOp, findDay, groupOf,
+  assistOp, buildItems, currentItem, defaultLiftOrder, effectiveStart, entryFor, extraOp, findDay, finishTime, groupOf, isStale,
   plannedReps, plannedWeight, previousCompletion, REST_SECS, restFor, rmOp, roundOp, setOp, summaryOp, timing, timingWarning,
   tonnage, uuid, type Entry, type Extra, type Item, type Session,
 } from './session.ts';
@@ -186,8 +186,15 @@ export function SessionView({ cfg, data, session, setSession, inventory, setInve
   const finish = () => {
     const op = rmOp(items, session, day);
     if (op) enqueue(cfg, op);
-    setSession({ ...session, finishedAt: new Date().toISOString() });
+    setSession({ ...session, finishedAt: finishTime(session) });
     setRest(null);
+  };
+  /** Leaving keeps what was logged; AMRAPs also go to rm calc so stats and history see them. */
+  const leave = () => {
+    const op = rmOp(items, session, day);
+    if (op) enqueue(cfg, op);
+    setSession(null);
+    onClose();
   };
 
   if (session.finishedAt) {
@@ -222,6 +229,17 @@ export function SessionView({ cfg, data, session, setSession, inventory, setInve
         <div class="progress"><div style={{ width: `${(doneCount / items.length) * 100}%` }} /></div>
         <LiveStats session={session} items={items} day={day} watchHr={watchHr} />
       </header>
+
+      {isStale(session) && (
+        <section class="card stale">
+          <p>This workout is from <b>{shortDate(session.date)}</b> and was never finished.</p>
+          <div class="btn-row">
+            <button class="btn primary" onClick={finish}>Finish it</button>
+            <button class="btn" onClick={() => { if (confirm('Leave it? What you logged stays in the sheet.')) leave(); }}>Leave it</button>
+          </div>
+          <small class="muted">Finishing ends it at its last logged set.</small>
+        </section>
+      )}
 
       <PlateStrip inventory={inventory} onChange={setInventory} />
 
@@ -309,7 +327,7 @@ export function SessionView({ cfg, data, session, setSession, inventory, setInve
         Finish workout
       </button>
       <button class="btn ghost wide" onClick={() => {
-        if (confirm(loggedAnything ? 'Leave this workout? What you logged stays in the sheet.' : 'Leave this workout?')) { setSession(null); onClose(); }
+        if (confirm(loggedAnything ? 'Leave this workout? What you logged stays in the sheet.' : 'Leave this workout?')) leave();
       }}>
         Leave without finishing
       </button>

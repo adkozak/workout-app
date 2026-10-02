@@ -9,7 +9,7 @@
 import {
   DEFAULT_INVENTORY, bestE1rm, buildItems, currentItem, defaultLiftOrder, e1rm, effectiveStart, entryFor,
   extraOp, findDay, groupOf, localDate, newSession, nextDay, planLoadings, plannedReps, plannedWeight,
-  previousCompletion, reconcile, repPrAt, repsToBeat, REST_SECS, restFor, rmOp, roundOp, sessionKey, setOp, summaryOp,
+  finishTime, isStale, previousCompletion, reconcile, repPrAt, repsToBeat, REST_SECS, restFor, rmOp, roundOp, sessionKey, setOp, summaryOp,
   timing, timingWarning, tonnage, touch, uuid, canon,
 } from './shared.js';
 import { clock, kg, kg1, liftName } from './format.js';
@@ -239,8 +239,9 @@ export class Store {
     if (entry.status === 'skipped') return null;
     if (rest) {
       const secs = restFor(item);
-      if (secs > 0) this.startRest(secs);
-      else this.endRest(); // no rest between warm-up sets
+      // No rest between warm-up sets, or after the last thing of the workout.
+      if (secs > 0 && this.current()) this.startRest(secs);
+      else this.endRest();
     }
     if (item.type === 'set' && item.row.kind === 'amrap' && entry.reps != null && item.liftRef.key) return this.celebrate(item, entry);
     const w = timingWarning(item, timing(this.session, entry.at, item.id).secsSincePrevious, this.items(), this.session, day);
@@ -262,9 +263,10 @@ export class Store {
     return null;
   }
 
-  done(item) {
+  /** `detail`: for a round, reps per exercise where they differ from the plan ([{index, reps}]). */
+  done(item, detail) {
     const at = iso(this.now());
-    if (item.type === 'round') return this.record(item, { status: 'done', at });
+    if (item.type === 'round') return this.record(item, { status: 'done', at, ...(detail && detail.length ? { detail } : {}) });
     return this.record(item, { status: 'done', weight: this.planned(item).weight, reps: plannedReps(item.row), at });
   }
 
@@ -275,7 +277,20 @@ export class Store {
     return this.record(item, { status: changed ? 'changed' : 'done', weight, reps, at: iso(this.now()) });
   }
 
-  skip(item) { return this.record(item, { status: 'skipped', at: iso(this.now()) }); }
+  /** Skip a set. For a 5x5 set, offers to skip the ones left too (stopping the 5x5 early). */
+  skip(item) {
+    const fb = this.record(item, { status: 'skipped', at: iso(this.now()) });
+    if (item.type !== 'set' || item.row.kind !== 'supplemental') return fb;
+    const left = this.items().filter((it) => it.type === 'set' && it.lift === item.lift && it.set === item.set && !this.entry(it));
+    if (!left.length) return fb;
+    return {
+      kind: 'info', text: '5x5 set skipped', sub: `Tap to skip the other ${left.length} too`,
+      action: () => { for (const it of left) if (!this.entry(it)) this.record(it, { status: 'skipped', at: iso(this.now()) }); return null; },
+    };
+  }
+
+  /** A workout still open from an earlier day. */
+  stale() { return isStale(this.session, new Date(this.now())); }
 
   undo() {
     const a = this.lastAction;
@@ -374,7 +389,7 @@ export class Store {
     if (op) this.enqueue(op);
     this.flushHr(true);
     this.endRest();
-    this.setSession({ ...this.session, finishedAt: iso(this.now()), hr: this.hrSummary() || this.session.hr });
+    this.setSession({ ...this.session, finishedAt: finishTime(this.session, new Date(this.now())), hr: this.hrSummary() || this.session.hr });
   }
 
   /** Save the finished workout (with RPE) and put the watch back on the home screen. */
@@ -385,8 +400,10 @@ export class Store {
     this.drop(s);
   }
 
-  /** Stop without finishing; what was logged stays in the sheet. */
+  /** Stop without finishing; what was logged stays in the sheet, AMRAPs included in rm calc. */
   leave() {
+    const op = this.day() ? rmOp(this.items(), this.session, this.day()) : null;
+    if (op) this.enqueue(op);
     this.flushHr(true);
     this.drop(this.session);
   }

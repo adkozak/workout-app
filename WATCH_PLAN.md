@@ -65,10 +65,12 @@ The rule: **every action during a session is one tap or one button press**, with
 |---|---|
 | Set done | Tap DONE, **or press the lower button** (if the key can be intercepted, see risks) |
 | Undo last | Long-press the lower button, or tap the "undo" toast (5 s) |
-| Changed / skip | Swipe up: big −/+ steppers for reps and weight, prefilled from the plan; a Skip button |
-| AMRAP | A rep picker that opens at the target and shows "N to beat e1RM" and your PR at that weight; confirm with DONE |
-| Pause / do next | Swipe left: the list of groups, then tap one |
-| Finish | Appears after the last item: summary, then RPE (1–10 buttons), then Save |
+| Changed / skip | Edit: −/+ steppers for weight and reps, prefilled from the plan; a Skip set button. Skipping a 5×5 set offers to skip the rest of the 5×5 |
+| AMRAP | A rep picker that opens at the target and shows "N to beat e1RM" and your PR at that weight; confirm with Save |
+| Assistance round short | Reps (next to More): −/+ per exercise, then Log round. Goes to the session log as `#2: 4` |
+| Pause / do next | More → Go to…: the list of groups, then tap one |
+| Finish | Appears after the last item: summary, then RPE, then Save & close. Leave also keeps the AMRAPs in rm calc |
+| Forgot to finish | Next day the watch shows "Workout from … still open": Finish it (ends at its last logged set), Continue or Leave |
 
 **Rest screen**
 - A countdown ring in huge digits, with heart rate and "recovered to X bpm" underneath.

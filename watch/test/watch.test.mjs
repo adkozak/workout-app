@@ -251,3 +251,70 @@ test('a practice workout queues nothing, is not shared, and ignores the shared w
   assert.equal(store.pendingClose, null);
   assert.equal(store.ops.length, 0);
 });
+
+/** Log everything up to (not including) the first item matching `stop`, AMRAPs at 8 reps. */
+function playUntil(store, now, stop) {
+  for (let cur = store.current(); cur && !stop(cur); cur = store.current()) {
+    now.advance(90);
+    if (cur.type === 'set' && cur.row.kind === 'amrap') store.logSet(cur, store.planned(cur).weight, 8);
+    else store.done(cur);
+  }
+}
+
+test('leaving after the AMRAPs still adds the rm calc row', async () => {
+  // Own backend: earlier tests already wrote today's rm row for this workout, and op ids dedupe.
+  const own = await startBackend();
+  const { store, now } = startedStore();
+  const before = own.backend.doGet({ token: 'dev', action: 'history' }).data.sessions.length;
+  playUntil(store, now, (it) => it.type === 'set' && it.row.kind === 'supplemental');
+  store.leave();
+  while (store.ops.length) {
+    const req = store.syncRequest();
+    store.applySync(req, await handle('sync', req, { fetchFn: zeppFetch, cfg: own.cfg }));
+  }
+  const rows = own.backend.doGet({ token: 'dev', action: 'history' }).data.sessions;
+  await own.close();
+  assert.equal(rows.length, before + 1);
+  assert.equal(rows[rows.length - 1].lifts.squat.reps, 8);
+});
+
+test('a workout left open overnight is stale and finishes at its last logged set', () => {
+  const { store, now } = startedStore();
+  now.advance(60);
+  store.done(store.current());
+  const lastAt = store.session.entries[Object.keys(store.session.entries)[0]].at;
+  assert.equal(store.stale(), false);
+  now.advance(20 * 3600);
+  assert.equal(store.stale(), true);
+  store.finish();
+  assert.equal(store.session.finishedAt, lastAt);
+});
+
+test('no rest after the last thing of the workout', () => {
+  const { store, now } = startedStore();
+  playUntil(store, now, () => false);
+  assert.equal(store.current(), null);
+  assert.equal(store.rest, null);
+});
+
+test('skipping a 5x5 set offers to skip the rest of the 5x5', () => {
+  const { store, now } = startedStore();
+  playUntil(store, now, (it) => it.type === 'set' && it.row.kind === 'supplemental');
+  now.advance(90); store.done(store.current());
+  const fb = store.skip(store.current());
+  assert.equal(fb.kind, 'info');
+  assert.match(fb.sub, /other 3/);
+  fb.action();
+  const supp = store.items().filter((it) => it.type === 'set' && it.row.kind === 'supplemental' && it.lift === 1);
+  assert.deepEqual(supp.map((it) => store.entry(it).status), ['done', 'skipped', 'skipped', 'skipped', 'skipped']);
+});
+
+test('a round with fewer reps on one exercise logs them per exercise', () => {
+  const { store, now } = startedStore();
+  playUntil(store, now, (it) => it.type === 'round');
+  now.advance(90);
+  store.done(store.current(), [{ index: 1, reps: 4 }]);
+  const op = store.ops[store.ops.length - 1];
+  assert.equal(op.type, 'assist_round');
+  assert.equal(op.note, '#2: 4');
+});

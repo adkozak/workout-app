@@ -101,6 +101,21 @@ export function effectiveStart(session: Session, firstAt = completionTimes(sessi
   return gap > EARLY_START_SECS ? new Date(Date.parse(firstAt) - FIRST_SET_SECS * 1000).toISOString() : session.startedAt;
 }
 
+/**
+ * When the workout ended, for the summary: now, except for a workout left open
+ * from an earlier day, which ended at its last logged set (not 20 hours later).
+ */
+export function finishTime(session: Session, now = new Date()): string {
+  if (session.date === localDate(now)) return now.toISOString();
+  const times = completionTimes(session);
+  return times[times.length - 1] ?? session.startedAt;
+}
+
+/** Still open from an earlier day (forgotten): offer to finish or leave it. */
+export function isStale(session: Session | null, now = new Date()): boolean {
+  return !!session && !session.finishedAt && session.date < localDate(now);
+}
+
 /** When the last thing before `at` was completed in this session (or the workout start). */
 export function previousCompletion(session: Session, at: string, excludeId?: string): string {
   const times = completionTimes(session, excludeId);
