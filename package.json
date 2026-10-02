@@ -18,7 +18,7 @@
     "watch:build": "node scripts/gen.mjs watch && cd watch && npx zeus build",
     "watch:dev": "node scripts/gen.mjs watch && cd watch && npx zeus dev",
     "watch:preview": "node scripts/gen.mjs watch && cd watch && npx zeus preview",
-    "watch:update": "node scripts/gen.mjs watch && cd watch && npx zeus preview -t \"Amazfit Active 2 (Round)\"",
+    "watch:update": "node scripts/gen.mjs watch && node scripts/watch-qr.mjs",
     "watch:bridge": "node scripts/gen.mjs watch && cd watch && npx zeus bridge"
   },
   "type": "module",

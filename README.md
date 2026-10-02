@@ -87,7 +87,7 @@ Setup:
    - `npm run watch:bridge` for live logs.
 5. In Zepp, open the app's settings (Profile → your watch → App settings → Workout 531) and paste the setup link or code. Use a dev server or TEST code until you trust it.
 
-**Updating the watch app:** `npm run watch:update` builds it and prints the install QR code for the Active 2 straight away (no device question). In Zepp, open Developer mode → Scan and scan it; the setup code is kept.
+**Updating the watch app:** `npm run watch:update` builds it for the Active 2 (no device question) and opens the install QR code as a page in your browser (`watch/dist/install-qr.html`; the terminal version is often stretched and won't scan). In Zepp, open Developer mode → Scan and scan it; the setup code is kept.
 
 Other commands:
 - `npm run watch:build` makes a `.zab` in `watch/dist/`.
