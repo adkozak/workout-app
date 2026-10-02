@@ -63,10 +63,10 @@ The rule: **every action during a session is one tap or one button press**, with
 
 | Action | Input |
 |---|---|
-| Set done | Tap DONE, **or press the lower button** (if the key can be intercepted, see risks) |
-| Undo last | Long-press the lower button, or tap the "undo" toast (5 s) |
+| Set done | Tap DONE (touch only, so a bumped button never logs a set) |
+| Undo last | **Physical button** (any but back), from any screen; a gold "undo" mark by the upper button shows when there's something to undo. Also the "tap to undo" toast, or More → Undo last |
 | Changed / skip | Edit: −/+ steppers for weight and reps, prefilled from the plan; a Skip set button. Skipping a 5×5 set offers to skip the rest of the 5×5 |
-| AMRAP | A rep picker that opens at the target and shows "N to beat e1RM" and your PR at that weight; confirm with Save |
+| AMRAP | A rep picker that opens at the target and shows "N to beat e1RM" and your PR at that weight; confirm with Save. 0 reps saves as skipped |
 | Assistance round short | Reps (next to More): −/+ per exercise, then Log round. Goes to the session log as `#2: 4` |
 | Pause / do next | More → Go to…: the list of groups, then tap one |
 | Finish | Appears after the last item: summary, then RPE, then Save & close. Leave also keeps the AMRAPs in rm calc |

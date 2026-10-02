@@ -272,6 +272,7 @@ export class Store {
 
   /** A set with its actual weight/reps; 'done' if that's the plan. AMRAP reps never count as a change. */
   logSet(item, weight, reps) {
+    if (item.type === 'set' && item.row.kind === 'amrap' && !reps) return this.skip(item); // 0 reps: failed, not an AMRAP
     const p = this.planned(item);
     const changed = Math.abs(weight - p.weight) > 1e-9 || (item.row.kind !== 'amrap' && reps !== plannedReps(item.row));
     return this.record(item, { status: changed ? 'changed' : 'done', weight, reps, at: iso(this.now()) });

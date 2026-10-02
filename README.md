@@ -94,7 +94,7 @@ Other commands:
 `appId` in `watch/app.json` is a placeholder. If preview refuses it, create an app at https://console.zepp.com and put its id there.
 
 On the watch:
-- **Physical buttons** (except back) do the main action on screen: DONE, open the AMRAP counter, skip the rest. The bridge log prints the key codes, which is useful if a button does something else on your firmware.
+- **Physical buttons** (except back) undo the last thing you logged, from any screen; a small gold "undo" mark by the upper button shows when there is something to undo. The bridge log prints the key codes, which is useful if a button does something else on your firmware.
 - **Back or swipe right** during a workout opens the menu instead of leaving the app.
 
 ## Tests

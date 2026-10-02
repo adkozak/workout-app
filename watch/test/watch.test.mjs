@@ -318,3 +318,12 @@ test('a round with fewer reps on one exercise logs them per exercise', () => {
   assert.equal(op.type, 'assist_round');
   assert.equal(op.note, '#2: 4');
 });
+
+test('an AMRAP of 0 reps is logged as skipped, not as an AMRAP', () => {
+  const { store, now } = startedStore();
+  playUntil(store, now, (it) => it.type === 'set' && it.row.kind === 'amrap');
+  const amrap = store.current();
+  store.logSet(amrap, store.planned(amrap).weight, 0);
+  assert.equal(store.entry(amrap).status, 'skipped');
+  assert.equal(store.ops[store.ops.length - 1].status, 'skipped');
+});

@@ -482,6 +482,8 @@ function SetActions({ item, entry, planned, data, week, onRecord }: {
   ].filter((x): x is { label: string; reps: number; gold?: boolean } => !!x).sort((a, b) => a.reps - b.reps) : [];
 
   const save = () => {
+    // An AMRAP of 0 reps means the set failed: log it as skipped so it doesn't skew e1RM.
+    if (amrap && reps === 0) { onRecord({ status: 'skipped', note: note || 'failed (0 reps)', at: now() }); return; }
     const weightChanged = Math.abs(weight - planned.weight) > 1e-9;
     const repsChanged = !amrap && reps !== target;
     onRecord({ status: weightChanged || repsChanged ? 'changed' : 'done', weight, reps, note: note || undefined, at: now() });
@@ -516,7 +518,7 @@ function SetActions({ item, entry, planned, data, week, onRecord }: {
         </div>
       )}
       <div class="btn-row">
-        <button class="btn primary" onClick={save}>{changing ? 'Save' : amrap ? `Done · ${reps} reps` : 'Done ✓'}</button>
+        <button class="btn primary" onClick={save}>{changing ? 'Save' : amrap ? (reps === 0 ? 'Skip (0 reps)' : `Done · ${reps} reps`) : 'Done ✓'}</button>
         {!changing && <button class="btn" onClick={() => setChanging(true)}>Change</button>}
         <button class="btn" onClick={() => onRecord({ status: 'skipped', note: note || undefined, at: now() })}>Skip</button>
         {entry && <button class="btn ghost" onClick={() => onRecord(null)}>Undo</button>}

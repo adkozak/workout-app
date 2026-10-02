@@ -204,6 +204,7 @@ function render() {
   const v = view || autoView();
   try { scrollTo({ y: 0 }); } catch (e) { /* not scrollable */ }
   (VIEWS[v.name] || VIEWS.home)(v);
+  if (['set', 'round', 'rest', 'overview', 'alldone'].includes(v.name)) undoMark();
   if (toast) drawToast();
   keepAwake(!!store.session && !store.session.finishedAt);
 }
@@ -461,7 +462,9 @@ const VIEWS = {
       count.setProperty(prop.TEXT, String(v.reps));
       const e = e1rm(weight, v.reps);
       const pr = info.best && e > info.best.e1rm;
-      est.setProperty(prop.MORE, { text: `e1RM ${kg1(e)}${pr ? '  PR!' : ''}`, color: pr ? GOLD : WHITE });
+      est.setProperty(prop.MORE, v.reps === 0
+        ? { text: '0 = failed: saves as skipped', color: RED_T }
+        : { text: `e1RM ${kg1(e)}${pr ? '  PR!' : ''}`, color: pr ? GOLD : WHITE });
       const ahead = info.targets.filter((t) => t.reps > v.reps).slice(0, 2);
       hint.setProperty(prop.TEXT, ahead.length ? ahead.map((t) => `${t.reps}: ${t.label}`).join(' · ') : 'every target hit');
     };
@@ -770,21 +773,30 @@ function keepAwake(on) {
   }
 }
 
-/** Physical buttons: the main action of whatever is on screen, so you don't have to aim. */
-function primary() {
-  const v = view || autoView();
-  if (v.name === 'set' && v.item.row.kind !== 'amrap') { act(() => store.done(v.item)); return true; }
-  if (v.name === 'set') { setView({ name: 'amrap', item: v.item, reps: store.amrapInfo(v.item).start }); return true; }
-  if (v.name === 'round') { act(() => store.done(v.item)); return true; }
-  if (v.name === 'rest') { dismissRest(); return true; }
-  if (v.name === 'overview') { dismissOverview(v.ov); return true; }
-  if (v.name === 'amrap') {
-    const info = store.amrapInfo(v.item);
-    view = null;
-    act(() => store.logSet(v.item, v.weight != null ? v.weight : info.weight, v.reps));
+/** Physical button (any but back): undo the last thing logged, from any screen. */
+function undoKey() {
+  const a = store.lastAction;
+  if (!a) {
+    buzz(VIBRATOR_SCENE_SHORT_LIGHT);
+    showToast({ text: 'Nothing to undo' }, 1500);
     return true;
   }
-  return false;
+  const what = a.item.type === 'round' ? `assistance round ${a.item.round + 1}` : `${liftName(a.item.liftRef)} ${setLabel(a.item)}`;
+  buzz(VIBRATOR_SCENE_SHORT_MIDDLE);
+  store.undo();
+  restOverAt = 0;
+  syncRestAlarm();
+  lastSyncAt = Math.min(lastSyncAt, Date.now() - 3000);
+  view = null;
+  showToast({ text: 'Undone', sub: what }, 3000);
+  return true;
+}
+
+/** Small "undo" by the upper physical button (2 o'clock) while there is something to undo. */
+function undoMark() {
+  if (!store.lastAction) return;
+  add(widget.ARC, { x: px(6), y: py(6), w: px(454), h: py(454), start_angle: -42, end_angle: -18, line_width: px(8), color: GOLD });
+  text(388, 120, 46, 24, 'undo', 16, GOLD);
 }
 
 function onBack() {
@@ -822,7 +834,7 @@ Page(
           if (ev !== KEY_EVENT_CLICK) return false;
           if (key === KEY_BACK) return onBack();
           if (!store.session) return false;
-          if (key === KEY_SELECT || key === KEY_UP || key === KEY_DOWN || key === KEY_SHORTCUT) return primary();
+          if (key === KEY_SELECT || key === KEY_UP || key === KEY_DOWN || key === KEY_SHORTCUT) return undoKey();
           return false;
         },
       });
