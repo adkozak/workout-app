@@ -639,24 +639,25 @@ function act(fn) {
   buzz(VIBRATOR_SCENE_SHORT_LIGHT);
   restOverAt = 0;
   const fb = fn();
-  handleFeedback(fb, true);
+  handleFeedback(fb);
   syncRestAlarm();
   lastSyncAt = Math.min(lastSyncAt, Date.now() - 3000); // send soon
   view = null;
   rerender();
 }
 
-function handleFeedback(fb, offerUndo = false) {
+function handleFeedback(fb) {
   if (fb && fb.kind === 'pr') {
     buzz(VIBRATOR_SCENE_DURATION_LONG);
     showToast({ text: fb.text, sub: fb.sub, gold: true }, 6000);
-  } else if (fb && (fb.kind === 'double' || fb.kind === 'missed')) {
+  } else if (fb && fb.kind === 'double') {
+    buzz(VIBRATOR_SCENE_SHORT_MIDDLE);
+    showToast({ text: fb.text, sub: 'Double tap? Lower button undoes it' }, 6000);
+  } else if (fb && fb.kind === 'missed') {
     buzz(VIBRATOR_SCENE_SHORT_MIDDLE);
     showToast({ text: fb.text, sub: fb.sub, action: fb.action }, 9000);
   } else if (fb && fb.kind === 'info') {
     showToast({ text: fb.text, sub: fb.sub, action: fb.action }, fb.action ? 7000 : 5000);
-  } else if (offerUndo && store.lastAction) {
-    showToast({ text: 'Logged', sub: 'tap here to undo', action: () => store.undo() }, 3500);
   }
 }
 
@@ -792,11 +793,14 @@ function undoKey() {
   return true;
 }
 
-/** Small "undo" by the upper physical button (2 o'clock) while there is something to undo. */
+/**
+ * Small "undo" by the lower physical button (about 4 o'clock) while there is something
+ * to undo. Kept small and clear of the on-screen buttons: a widget on top swallows taps.
+ * (The upper button is the system's home button; apps can't catch it.)
+ */
 function undoMark() {
   if (!store.lastAction) return;
-  add(widget.ARC, { x: px(6), y: py(6), w: px(454), h: py(454), start_angle: -42, end_angle: -18, line_width: px(8), color: GOLD });
-  text(388, 120, 46, 24, 'undo', 16, GOLD);
+  text(394, 336, 38, 26, 'undo', 16, GOLD);
 }
 
 function onBack() {

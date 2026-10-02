@@ -87,6 +87,8 @@ Setup:
    - `npm run watch:bridge` for live logs.
 5. In Zepp, open the app's settings (Profile → your watch → App settings → Workout 531) and paste the setup link or code. Use a dev server or TEST code until you trust it.
 
+**Updating the watch app:** `npm run watch:update` builds it and prints the install QR code for the Active 2 straight away (no device question). In Zepp, open Developer mode → Scan and scan it; the setup code is kept.
+
 Other commands:
 - `npm run watch:build` makes a `.zab` in `watch/dist/`.
 - `npm run watch:dev` runs the simulator. It is a separate download from https://docs.zepp.com/docs/guides/tools/simulator/download/.
@@ -94,7 +96,7 @@ Other commands:
 `appId` in `watch/app.json` is a placeholder. If preview refuses it, create an app at https://console.zepp.com and put its id there.
 
 On the watch:
-- **Physical buttons** (except back) undo the last thing you logged, from any screen; a small gold "undo" mark by the upper button shows when there is something to undo. The bridge log prints the key codes, which is useful if a button does something else on your firmware.
+- **Buttons:** the lower button undoes the last thing you logged, from any screen; a small gold "undo" next to it shows when there is something to undo. The upper button is the watch's own home button. `npm run watch:bridge` prints key codes if a button does something unexpected.
 - **Back or swipe right** during a workout opens the menu instead of leaving the app.
 
 ## Tests
